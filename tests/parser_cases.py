@@ -34,6 +34,7 @@ CASES = [
         ("14", "SGD", "expense", "Food", 0, None),
         ("9", "SGD", "expense", "Transport", 0, None),
     ], "rule"),
+    ("soya milk 2", [("2", "SGD", "expense", "Food", 0, None)], "rule"),
     ("kopi 1.8", [("1.8", "SGD", "expense", "Food", 0, None)], "rule"),
     ("bun bo 55.000", [("55000", "VND", "expense", "Food", 0, None)], "rule"),
     ("grab 45k vp", [("45000", "VND", "expense", "Transport", 0, "VP")], "rule"),

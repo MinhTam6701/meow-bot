@@ -112,3 +112,32 @@ def test_llm_bad_output_becomes_a_question_not_a_crash():
     result = parse_message("something weird 5 5", make_context(), llm_client=client, on_llm_call=logs.append)
     assert result.entries == [] and result.question
     assert logs[0].ok is False and "ValidationError" in logs[0].error
+
+
+def test_llm_call_matches_real_sdk_signature():
+    """The fake client accepts anything, so check the arguments against the real SDK."""
+    import inspect
+
+    from anthropic.resources.messages import Messages
+
+    client = FakeClient({"entries": []})
+    parse_message("paid 23 for the haircut", make_context(), llm_client=client)
+    allowed = inspect.signature(Messages.create).parameters
+    unknown = set(client.calls[0]) - set(allowed)
+    assert not unknown, f"not accepted by anthropic SDK: {unknown}"
+
+
+def test_llm_api_error_is_logged_not_raised():
+    class Boom:
+        messages = None
+
+        def __init__(self):
+            self.messages = self
+
+        def create(self, **kw):
+            raise RuntimeError("overloaded")
+
+    logs = []
+    result = parse_message("paid 23 for the haircut", make_context(), llm_client=Boom(), on_llm_call=logs.append)
+    assert result.question and not result.entries
+    assert logs[0].ok is False and "overloaded" in logs[0].error

@@ -24,7 +24,7 @@ KEYWORDS: dict[str, set[str]] = {
         "mcdonalds", "kfc", "restaurant", "sushi", "ramen", "pizza", "bbq", "hotpot",
         "chicken", "rice", "noodles", "grabfood", "foodpanda", "deliveroo", "starbucks",
         "ansang", "antrua", "antoi", "trasua", "highlands", "phuclong", "dessert",
-        "fruit", "juice", "cake",
+        "fruit", "juice", "cake", "milk", "soya", "soy", "yogurt", "eggs", "sandwich", "bakery",
     },
     "Transport": {
         "grab", "taxi", "gojek", "tada", "cdg", "comfortdelgro", "uber", "bus", "mrt",

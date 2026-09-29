@@ -107,7 +107,6 @@ def parse_with_llm(
         resp = client.messages.create(
             model=model,
             max_tokens=1024,
-            temperature=0,
             system=build_system(ctx),
             tools=[build_tool(ctx)],
             tool_choice={"type": "tool", "name": TOOL_NAME},
@@ -136,7 +135,7 @@ def parse_with_llm(
         if entries:
             return ParseResult(entries=entries, parser="llm")
         return ParseResult(question=question or "I couldn't find an amount there. What did you spend or receive?", parser="llm")
-    except (ValidationError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except Exception as exc:  # API errors, bad output: log it and ask the user instead of crashing
         log.error = f"{type(exc).__name__}: {exc}"[:500]
         log.latency_ms = log.latency_ms or int((time.monotonic() - started) * 1000)
         return ParseResult(question="Sorry, I couldn't read that one. Could you write it like \"pho 65k\" or \"grab 12.5\"?", parser="llm")
