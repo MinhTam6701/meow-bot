@@ -15,6 +15,8 @@ from meow.config import get_settings  # noqa: E402
 from meow.runtime import handle_update  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
+# httpx logs full request URLs, which contain the bot token. Keep them out of logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 app = FastAPI(title="M.E.O.W. bot", docs_url=None, redoc_url=None, openapi_url=None)
 
 

@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from meow.runtime import get_bot, handle_update  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# httpx logs full request URLs, which contain the bot token. Keep them out of logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def main() -> None:
