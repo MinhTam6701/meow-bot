@@ -59,6 +59,10 @@ Send `/start`, then try `pho 65k`, `coffee 6, lunch 14`, `/setbalance DBS 2340.5
 
 ### 3. Push to GitHub
 ```bash
+git init
+git add .
+git commit -m "M.E.O.W. v1"
+git branch -M main
 git remote add origin https://github.com/MinhTam6701/meow-bot.git
 git push -u origin main
 ```
