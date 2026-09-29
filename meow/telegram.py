@@ -1,0 +1,52 @@
+"""A thin Telegram Bot API client (only the methods the bot uses)."""
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+import httpx
+
+log = logging.getLogger(__name__)
+
+
+class TelegramError(RuntimeError):
+    pass
+
+
+class TelegramAPI:
+    def __init__(self, token: str, timeout: float = 15.0):
+        self.base = f"https://api.telegram.org/bot{token}"
+        self.http = httpx.Client(timeout=timeout)
+
+    def call(self, method: str, **params: Any) -> Any:
+        payload = {k: v for k, v in params.items() if v is not None}
+        resp = self.http.post(f"{self.base}/{method}", json=payload)
+        data = resp.json()
+        if not data.get("ok"):
+            desc = data.get("description", "")
+            # Editing a message to identical content is harmless.
+            if "message is not modified" in desc:
+                return None
+            raise TelegramError(f"{method}: {desc}")
+        return data.get("result")
+
+    def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> dict:
+        return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML",
+                         reply_markup=reply_markup, link_preview_options={"is_disabled": True})
+
+    def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup: Optional[dict] = None):
+        return self.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text,
+                         parse_mode="HTML", reply_markup=reply_markup or {"inline_keyboard": []})
+
+    def edit_message_reply_markup(self, chat_id: int, message_id: int, reply_markup: Optional[dict] = None):
+        return self.call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id,
+                         reply_markup=reply_markup or {"inline_keyboard": []})
+
+    def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None):
+        return self.call("answerCallbackQuery", callback_query_id=callback_query_id, text=text)
+
+    def send_chat_action(self, chat_id: int, action: str = "typing"):
+        try:
+            return self.call("sendChatAction", chat_id=chat_id, action=action)
+        except Exception:  # cosmetic only
+            return None
