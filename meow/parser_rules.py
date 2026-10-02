@@ -72,6 +72,18 @@ def normalize(word: str) -> str:
     return "".join(ch for ch in word if not unicodedata.combining(ch)).strip(".!?:()\"'")
 
 
+STOPWORDS = {"the", "a", "an", "at", "for", "my", "to", "from", "on", "in", "with", "and", "of"}
+
+
+def merchant_key(description: str) -> Optional[str]:
+    """The word a learned rule is keyed on: the first meaningful word ("Grab to work" -> "grab")."""
+    for word in description.split():
+        n = normalize(word)
+        if len(n) >= 2 and n not in STOPWORDS and not any(ch.isdigit() for ch in n):
+            return n
+    return None
+
+
 def _category_for(words: list[str]) -> Optional[str]:
     norm = [normalize(w) for w in words]
     # Join two-word names such as "xanh sm", "hom qua", "tra sua".
@@ -140,7 +152,13 @@ def _parse_segment(segment: str, ctx: ParseContext) -> Optional[Entry]:
     if any(re.search(r"\d", w) for w in words):
         return None  # other numbers (dates, quantities) -> LLM
 
-    category = _category_for(words)
+    learned = ctx.merchant_rules.get(merchant_key(" ".join(words)) or "")
+    category = learned or _category_for(words)
+    if learned and not income_sign:
+        cat = ctx.category(learned)
+        value, currency = amount.resolve(ctx.home_currency, explicit_currency)
+        return Entry(amount=value, currency=currency, type=cat.type if cat else "expense", category=learned,
+                     description=" ".join(words)[:200], date=day, wallet=wallet)
     if category is None:
         if not income_sign:
             return None

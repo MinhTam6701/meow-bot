@@ -37,3 +37,10 @@ def handle_update(update: dict) -> None:
                 bot.tg.send_message(chat_id, "😿 Something went wrong on my side. Nothing was saved, please try again.")
             except Exception:
                 log.exception("could not send the error note")
+
+
+def run_tick() -> dict:
+    """Scheduled work: exchange rates and end-of-day reminders."""
+    bot = get_bot()
+    with db.connect(bot.s.database_url) as conn:
+        return bot.run_tick(conn)

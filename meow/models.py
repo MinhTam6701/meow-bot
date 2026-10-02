@@ -55,10 +55,15 @@ class ParseContext:
     home_currency: str
     wallets: list[WalletInfo]
     categories: list[CategoryInfo]
+    # Learned from corrections: merchant keyword -> category name
+    merchant_rules: dict[str, str] = field(default_factory=dict)
 
     def wallet_by_name(self, name: str) -> Optional[WalletInfo]:
         n = name.strip().lower()
         return next((w for w in self.wallets if w.name.lower() == n), None)
+
+    def category(self, name: str) -> Optional[CategoryInfo]:
+        return next((c for c in self.categories if c.name == name), None)
 
     def category_names(self, type_: str) -> list[str]:
         return [c.name for c in self.categories if c.type == type_]

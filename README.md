@@ -92,7 +92,23 @@ from llm_calls;
 select parser, count(distinct batch_id) from transactions where reverses_id is null group by 1;
 ```
 
-## Not in v1 (next milestones)
+## M2 features
+
+| Feature | How it works |
+|---|---|
+| End-of-day check-in | At 21:30 (`/remind` to change), only if nothing was logged. Buttons: no-spend day, remind in 1h, skip, pause. Reply `45` to log a day total. |
+| Exchange rates | Daily rates (incl. VND) from open.er-api.com. Every entry stores its SGD amount; `/month` is all in SGD. |
+| Learning | Change a shop's category twice (e.g. grab → Fun) and it's remembered. `/rules` to see or forget. |
+| Personas | `/persona`: Sassy Cat, Asian Mom, Zen Monk or Plain; roast level 0–3; `/language` EN, VI or mix. Lines are pre-written, so no extra AI cost. |
+| Budgets | `/budget Food 400`, `/budget total 2000`. Alerts on the card at 80% and 100%. |
+| Transfers & wallets | `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr`. `/wallet add GrabPay SGD ewallet`. |
+
+### The scheduler
+Supabase runs `pg_cron` every 15 minutes and calls the Vercel app with an `X-Cron-Secret` header
+(stored in Supabase Vault as `meow_cron_secret`). Each tick fetches the day's rates once, fills in any
+entries saved while rates were unavailable, and sends due check-ins. Every step is safe to repeat.
+
+## Not in M2 (next milestones)
 Transfers, budgets, FX conversion to SGD, personas, end-of-day reminder (via Supabase
 pg_cron → a Vercel endpoint, since Vercel Hobby cron runs only once a day), merchant-rule
 learning, receipts and voice, Mochi.

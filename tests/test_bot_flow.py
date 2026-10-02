@@ -4,6 +4,8 @@ Set TEST_DATABASE_URL to a throwaway database; the tests wipe its public schema.
 Skipped when it isn't set.
 """
 import os
+import random
+from decimal import Decimal
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +22,7 @@ pytestmark = pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL not set")
 
 ME = 1001
 STRANGER = 2002
-SCHEMA = (Path(__file__).parent.parent / "supabase/migrations/0001_init.sql").read_text()
+SCHEMA = "\n".join(p.read_text() for p in sorted((Path(__file__).parent.parent / "supabase/migrations").glob("*.sql")))
 # 22:30 in Singapore on 29 Sep 2026
 NOW = datetime(2026, 9, 29, 14, 30, tzinfo=timezone.utc)
 
@@ -69,7 +71,14 @@ def env():
     conn.autocommit = False
     tg, llm = FakeTelegram(), FakeLLM()
     settings = Settings(allowed_user_ids={ME}, anthropic_model="claude-haiku-4-5")
-    bot = Bot(settings, tg, llm, clock=lambda: NOW)
+    clock = SimpleNamespace(now=NOW)
+    fx_calls = []
+
+    def fake_rates(base):
+        fx_calls.append(base)
+        return {"SGD": Decimal(1), "VND": Decimal(20000), "USD": Decimal("0.8")}
+
+    bot = Bot(settings, tg, llm, clock=lambda: clock.now, fx_fetch=fake_rates, rng=random.Random(1))
     counter = iter(range(1, 10_000))
 
     def say(text, user=ME):
@@ -84,7 +93,7 @@ def env():
             "message": {"message_id": message_id, "chat": {"id": user}}}})
         return tg.edits[-1] if tg.edits else None
 
-    yield SimpleNamespace(conn=conn, tg=tg, llm=llm, bot=bot, say=say, press=press)
+    yield SimpleNamespace(conn=conn, tg=tg, llm=llm, bot=bot, say=say, press=press, clock=clock, fx_calls=fx_calls)
     conn.close()
 
 
@@ -113,7 +122,8 @@ def test_log_multi_entry_message(env):
     card = env.say("coffee 6, lunch 14, pho 65k")
     assert "Logged 3 entries" in card.text
     assert "S$6.00" in card.text and "65,000₫" in card.text
-    assert "Today: S$20.00 · 65,000₫ spent" in card.text
+    assert "65,000₫ (≈ S$3.25)" in card.text  # 20,000 VND per SGD in the fake rates
+    assert "Today: S$23.25 spent" in card.text
     rows = env.conn.execute("select t.amount_minor, t.currency, w.name wallet from transactions t join wallets w on w.id = t.wallet_id order by t.id").fetchall()
     assert [(r["amount_minor"], r["currency"], r["wallet"]) for r in rows] == [
         (-600, "SGD", "DBS"), (-1400, "SGD", "DBS"), (-65000, "VND", "VP")]
@@ -215,8 +225,9 @@ def test_setbalance_balance_month_undo(env):
     assert "DBS: <b>S$6,526.50</b>" in bal and "VP: <b>11,955,000₫</b>" in bal
 
     month = env.say("/month").text
-    assert "September 2026" in month and "Spent S$14.00" in month and "Income +S$4,200.00" in month
-    assert "Net +S$4,186.00" in month and "Spent 45,000₫" in month
+    # Everything in SGD: lunch 14 + grab 45k VND (= S$2.25 at 20,000/SGD)
+    assert "September 2026" in month and "Spent <b>S$16.25</b>" in month and "Income <b>+S$4,200.00</b>" in month
+    assert "Net +S$4,183.75" in month and "Paid in other currencies: 45,000₫" in month
 
     assert "grab" in env.say("/undo").text
     assert "VP: <b>12,000,000₫</b>" in env.say("/balance").text

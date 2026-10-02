@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meow.config import get_settings  # noqa: E402
-from meow.runtime import handle_update  # noqa: E402
+from meow.runtime import handle_update, run_tick  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 # httpx logs full request URLs, which contain the bot token. Keep them out of logs.
@@ -32,7 +32,16 @@ def health(path: str = ""):
 
 
 @app.post("/{path:path}")
-async def telegram_webhook(request: Request, path: str = "", x_telegram_bot_api_secret_token: str = Header(default="")):
+async def telegram_webhook(request: Request, path: str = "", x_telegram_bot_api_secret_token: str = Header(default=""),
+                           x_cron_secret: str = Header(default="")):
+    if x_cron_secret:
+        # The Supabase scheduler (pg_cron + pg_net) calls this every 15 minutes.
+        cron = get_settings().cron_secret
+        if not cron or not hmac.compare_digest(x_cron_secret, cron):
+            log.warning("tick rejected: bad cron secret")
+            raise HTTPException(status_code=401, detail="bad secret")
+        return {"ok": True, **(await run_in_threadpool(run_tick))}
+
     secret = get_settings().telegram_webhook_secret
     if not secret or not hmac.compare_digest(x_telegram_bot_api_secret_token, secret):
         log.warning("webhook rejected: bad or missing secret (path=/%s)", path)

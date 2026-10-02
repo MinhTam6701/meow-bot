@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional
 
 from .models import ParseContext, ParseResult
 from .parser_llm import LLMCallLog, parse_with_llm
-from .parser_rules import parse_with_rules
+from .parser_rules import merchant_key, parse_with_rules
 
 
 def has_amount(text: str) -> bool:
@@ -31,4 +31,11 @@ def parse_message(
 
     if llm_client is None or not llm_allowed:
         return ParseResult(question="I couldn't read that one on my own. Try a format like \"pho 65k\" or \"grab 12.5 yesterday\".")
-    return parse_with_llm(text, ctx, llm_client, model, on_llm_call)
+    result = parse_with_llm(text, ctx, llm_client, model, on_llm_call)
+    # Learned merchant rules beat the model's guess.
+    for e in result.entries:
+        learned = ctx.merchant_rules.get(merchant_key(e.description) or "")
+        cat = ctx.category(learned) if learned else None
+        if cat and cat.type == e.type:
+            e.category = cat.name
+    return result

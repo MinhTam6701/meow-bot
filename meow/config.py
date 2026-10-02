@@ -27,6 +27,10 @@ class Settings:
     allowed_user_ids: set[int] = field(default_factory=lambda: _ids(os.getenv("ALLOWED_USER_IDS", "")))
     home_currency: str = field(default_factory=lambda: os.getenv("HOME_CURRENCY", "SGD"))
     default_timezone: str = field(default_factory=lambda: os.getenv("DEFAULT_TIMEZONE", "Asia/Singapore"))
+    # Sent by the Supabase scheduler to /api/... as X-Cron-Secret.
+    cron_secret: str = field(default_factory=lambda: os.getenv("CRON_SECRET", ""))
+    # A single expense at or above this (home currency) gets the "big spend" comment.
+    big_expense: float = field(default_factory=lambda: float(os.getenv("BIG_EXPENSE", "50")))
     llm_daily_call_cap: int = field(default_factory=lambda: int(os.getenv("LLM_DAILY_CALL_CAP", "300")))
     # US$ per million tokens, used to estimate the cost of each call.
     llm_input_price: float = field(default_factory=lambda: float(os.getenv("LLM_INPUT_PRICE_PER_MTOK", "1.0")))
