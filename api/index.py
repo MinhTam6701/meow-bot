@@ -20,15 +20,22 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 app = FastAPI(title="M.E.O.W. bot", docs_url=None, redoc_url=None, openapi_url=None)
 
 
-@app.get("/api/health")
-def health():
+# Vercel may hand the request to this function under a rewritten path (e.g. /api/index),
+# so the routes accept any path: GET is a health check, POST is the Telegram webhook.
+# The secret token, not the path, is what protects the webhook.
+log = logging.getLogger("meow.api")
+
+
+@app.get("/{path:path}")
+def health(path: str = ""):
     return {"ok": True}
 
 
-@app.post("/api/telegram")
-async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: str = Header(default="")):
+@app.post("/{path:path}")
+async def telegram_webhook(request: Request, path: str = "", x_telegram_bot_api_secret_token: str = Header(default="")):
     secret = get_settings().telegram_webhook_secret
     if not secret or not hmac.compare_digest(x_telegram_bot_api_secret_token, secret):
+        log.warning("webhook rejected: bad or missing secret (path=/%s)", path)
         raise HTTPException(status_code=401, detail="bad secret")
     update = await request.json()
     # Handled before responding: Vercel may freeze the function once the response is sent.
