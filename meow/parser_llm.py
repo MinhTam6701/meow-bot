@@ -81,7 +81,10 @@ Other rules:
 - Salary, bonus, refunds, money received are income. Everything else is an expense.
 - Pick the closest category; use 'Other' or 'Other income' only if nothing fits.
 - Keep descriptions short and in the user's own words.
-- Only ask a question if the amount or whether money came in or went out is truly unclear. Never ask about category or wallet.
+- Only ask a question if the amount itself is missing or unreadable, or you truly cannot tell whether money came in or went out.
+- Never ask about the currency: the currency rules above always decide it. Never ask about category, wallet, or timing.
+- A message that mentions a purchase and an amount is something already paid, unless it clearly says it is planned.
+- Gifts, treats or payments for other people are expenses.
 - If the message has no money movement at all, return no entries and a short friendly question.
 Always answer by calling the {TOOL_NAME} tool."""
 
