@@ -686,3 +686,13 @@ def reconciliation_summary(conn, user_id: int, month: date) -> list[dict]:
         """select r.*, w.name, w.currency from reconciliations r join wallets w on w.id = r.wallet_id
            where r.user_id = %s and r.month = %s order by w.id""",
         (user_id, month)).fetchall()
+
+
+def checked_wallet_ids(conn, user_id: int) -> set[int]:
+    rows = conn.execute("select id from wallets where user_id = %s and check_monthly and not archived",
+                        (user_id,)).fetchall()
+    return {r["id"] for r in rows}
+
+
+def set_checked_wallets(conn, user_id: int, wallet_ids: list[int]) -> None:
+    conn.execute("update wallets set check_monthly = (id = any(%s)) where user_id = %s", (wallet_ids, user_id))

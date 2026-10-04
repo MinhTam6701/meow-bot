@@ -152,3 +152,17 @@ def test_pin_notices_and_bots_are_ignored(env):
                 "from": {"id": ME, "first_name": "Tam"}, "pinned_message": {"message_id": 8}}
     env.bot.process_update(env.conn, {"update_id": 99998, "message": user_pin})
     assert len(env.tg.sent) == before
+
+
+def test_choose_wallets_for_the_balance_check(env):
+    env.say("/start")
+    env.say("/wallet add VCB VND")
+    assert "VP, VCB" in env.say("/wallet check").text or "DBS, VP, VCB" in env.say("/wallet check").text
+    assert "DBS, VCB" in env.say("/wallet check dbs vcb").text
+    assert "🏦 checked monthly" in env.say("/wallet").text
+    assert "don't have a wallet called Revolut" in env.say("/wallet check DBS Revolut").text
+    at(env, 2026, 10, 3)
+    msg = env.say("/check")
+    assert "DBS</b> should be" in msg.text
+    env.press(next(b for b in buttons(msg.markup) if b.startswith("rc:ok:")), msg.id)
+    assert "VCB</b> should be" in env.tg.sent[-1].text  # VP was skipped

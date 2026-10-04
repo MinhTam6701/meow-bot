@@ -810,12 +810,36 @@ class Bot:
         uid = user["telegram_id"]
         parts = args.split()
         usage = ("Add one: <code>/wallet add Cash SGD cash</code> (types: cash, bank, ewallet, credit)\n"
-                 "Make one the default for its currency: <code>/wallet default Cash</code>")
+                 "Make one the default for its currency: <code>/wallet default Cash</code>\n"
+                 "Choose which ones the monthly balance check asks about: <code>/wallet check DBS VPBank VCB</code>")
         if not parts:
             ws = db.wallets(conn, uid)
+            checked = db.checked_wallet_ids(conn, uid)
             lines = ["👛 <b>Wallets</b>", ""] + [
-                f"• {escape(w.name)} ({w.currency})" + (" · default" if w.is_default else "") for w in ws]
+                f"• {escape(w.name)} ({w.currency})" + (" · default" if w.is_default else "")
+                + (" · 🏦 checked monthly" if w.id in checked else "") for w in ws]
             self.tg.send_message(chat_id, "\n".join(lines + ["", usage]))
+            return
+        if parts[0].lower() == "check":
+            ws = db.wallets(conn, uid)
+            if len(parts) == 1:
+                checked = db.checked_wallet_ids(conn, uid)
+                names = ", ".join(w.name for w in ws if w.id in checked) or "none"
+                self.tg.send_message(chat_id, f"🏦 Monthly balance check: <b>{escape(names)}</b>\n"
+                                              "Change it: <code>/wallet check DBS VPBank VCB</code> (list them all)")
+                return
+            ctx_wallets = ParseContext(self.today_for(user), user["home_currency"], ws, [])
+            chosen, unknown = [], []
+            for name in parts[1:]:
+                w = ctx_wallets.wallet_by_name(name.strip(","))
+                (chosen.append(w) if w else unknown.append(name))
+            if unknown:
+                self.tg.send_message(chat_id, f"I don't have a wallet called {escape(unknown[0])}. "
+                                              f"Your wallets: {escape(', '.join(w.name for w in ws))}")
+                return
+            db.set_checked_wallets(conn, uid, [w.id for w in chosen])
+            self.tg.send_message(chat_id, "🏦 The monthly balance check will ask about: <b>"
+                                          + escape(", ".join(w.name for w in chosen)) + "</b>")
             return
         if parts[0].lower() == "add" and len(parts) in (3, 4):
             name, cur = parts[1], parts[2].upper()
