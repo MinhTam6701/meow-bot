@@ -108,6 +108,17 @@ Supabase runs `pg_cron` every 15 minutes and calls the Vercel app with an `X-Cro
 (stored in Supabase Vault as `meow_cron_secret`). Each tick fetches the day's rates once, fills in any
 entries saved while rates were unavailable, and sends due check-ins. Every step is safe to repeat.
 
+## Importing Money Manager history
+
+```bash
+python scripts/import_moneymanager.py EXPORT.xlsx BACKUP.mmbackup --telegram-id <your id> --dry-run
+python scripts/import_moneymanager.py EXPORT.xlsx BACKUP.mmbackup --telegram-id <your id>
+python scripts/eval_history.py EXPORT.xlsx [--claude]   # accuracy on your last 3 months
+```
+Entries come from the export, balances from the backup (one opening-balance entry per wallet makes
+them match exactly). Phrases you used consistently become learned rules. Re-running replaces the
+previous import. Keep your files out of the repo (`.gitignore` blocks .xlsx/.csv/.mmbackup).
+
 ## Not in M2 (next milestones)
 Transfers, budgets, FX conversion to SGD, personas, end-of-day reminder (via Supabase
 pg_cron → a Vercel endpoint, since Vercel Hobby cron runs only once a day), merchant-rule

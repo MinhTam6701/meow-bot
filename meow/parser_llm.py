@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import ValidationError
 
+from .defaults import CATEGORY_HINTS
 from .models import Entry, ParseContext, ParseResult
 
 TOOL_NAME = "record_transactions"
@@ -61,8 +62,13 @@ def build_tool(ctx: ParseContext) -> dict:
     }
 
 
-def build_system(ctx: ParseContext) -> str:
+def build_system(ctx: ParseContext, examples: Optional[list[tuple[str, str]]] = None) -> str:
     wallets = ", ".join(f"{w.name} ({w.currency})" for w in ctx.wallets) or "none"
+    cats = "\n".join(f"- {c.name}: {CATEGORY_HINTS.get(c.name, '')}".rstrip(": ") for c in ctx.categories)
+    past = ""
+    if examples:
+        past = ("\n\nHow this user categorised similar entries before (follow this, it is their own system):\n"
+                + "\n".join(f'- "{d}" -> {c}' for d, c in examples))
     return f"""You turn short personal-finance chat messages into structured entries.
 The user lives in Singapore and also spends in Vietnam. They write in English, Vietnamese or a mix.
 
@@ -78,7 +84,7 @@ Currency rules:
 
 Other rules:
 - One message can hold several entries; return all of them.
-- Salary, bonus, refunds, money received are income. Everything else is an expense.
+- Salary, bonus, refunds, money received from family are income. Everything else is an expense.
 - Pick the closest category; use 'Other' or 'Other income' only if nothing fits.
 - Keep descriptions short and in the user's own words.
 - Only ask a question if the amount itself is missing or unreadable, or you truly cannot tell whether money came in or went out.
@@ -86,6 +92,9 @@ Other rules:
 - A message that mentions a purchase and an amount is something already paid, unless it clearly says it is planned.
 - Gifts, treats or payments for other people are expenses.
 - If the message has no money movement at all, return no entries and a short friendly question.
+Categories:
+{cats}{past}
+
 Always answer by calling the {TOOL_NAME} tool."""
 
 
@@ -101,6 +110,7 @@ def parse_with_llm(
     client: Any,
     model: str,
     on_call: Optional[Callable[[LLMCallLog], None]] = None,
+    examples: Optional[list[tuple[str, str]]] = None,
 ) -> ParseResult:
     """`client` is an anthropic.Anthropic instance (or a test double with .messages.create)."""
     started = time.monotonic()
@@ -110,7 +120,7 @@ def parse_with_llm(
         resp = client.messages.create(
             model=model,
             max_tokens=1024,
-            system=build_system(ctx),
+            system=build_system(ctx, examples),
             tools=[build_tool(ctx)],
             tool_choice={"type": "tool", "name": TOOL_NAME},
             messages=[{"role": "user", "content": text}],

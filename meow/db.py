@@ -76,10 +76,11 @@ def set_pending(conn, telegram_id: int, text: Optional[str]) -> None:
 
 def wallets(conn, user_id: int) -> list[WalletInfo]:
     rows = conn.execute(
-        "select id, name, currency, is_default from wallets where user_id = %s and not archived order by id",
+        """select id, name, currency, is_default, aliases from wallets
+           where user_id = %s and not archived order by id""",
         (user_id,),
     ).fetchall()
-    return [WalletInfo(r["id"], r["name"], r["currency"], r["is_default"]) for r in rows]
+    return [WalletInfo(r["id"], r["name"], r["currency"], r["is_default"], list(r["aliases"] or [])) for r in rows]
 
 
 def categories(conn, user_id: int) -> list[CategoryInfo]:
@@ -253,7 +254,8 @@ def month_summary(conn, user_id: int, first_day: date, next_first_day: date) -> 
 
 def balances(conn, user_id: int) -> list[dict]:
     return conn.execute(
-        "select wallet_id, name, currency, type, balance_minor from wallet_balances where user_id = %s order by wallet_id",
+        """select wallet_id, name, currency, type, in_total, balance_minor
+           from wallet_balances where user_id = %s order by wallet_id""",
         (user_id,),
     ).fetchall()
 
@@ -353,7 +355,7 @@ def logged_on(conn, user_id: int, day: date) -> bool:
     """Any live expense/income for the day, or a no-spend mark."""
     row = conn.execute(
         """select exists (select 1 from live_transactions where user_id = %s and occurred_on = %s
-                          and type in ('expense', 'income'))
+                          and type in ('expense', 'income') and source not in ('recurring', 'import'))
                or exists (select 1 from day_marks where user_id = %s and day = %s) as logged""",
         (user_id, day, user_id, day),
     ).fetchone()
@@ -476,3 +478,68 @@ def set_default_wallet(conn, user_id: int, wallet_id: int) -> None:
     conn.execute("update wallets set is_default = false where user_id = %s and currency = %s",
                  (user_id, w["currency"]))
     conn.execute("update wallets set is_default = true where id = %s", (wallet_id,))
+
+
+# --- M2.1: examples for Claude --------------------------------------------------
+
+def past_descriptions(conn, user_id: int, limit: int = 3000) -> list[dict]:
+    """Distinct descriptions this user has logged, with their category and how often."""
+    return conn.execute(
+        """select t.description, c.name as category, count(*) as n
+           from live_transactions t join categories c on c.id = t.category_id
+           where t.user_id = %s and t.type in ('expense', 'income') and t.description is not null
+           group by 1, 2 order by n desc limit %s""",
+        (user_id, limit),
+    ).fetchall()
+
+
+def seed_rule(conn, user_id: int, keyword: str, category_id: int, count: int) -> None:
+    conn.execute(
+        """insert into merchant_rules (user_id, keyword, category_id, corrections) values (%s, %s, %s, %s)
+           on conflict (user_id, keyword, category_id) do update set corrections = greatest(merchant_rules.corrections, excluded.corrections)""",
+        (user_id, keyword, category_id, count),
+    )
+
+
+# --- M2.1: recurring entries ----------------------------------------------------
+
+def add_recurring(conn, user_id: int, r: dict) -> int:
+    return conn.execute(
+        """insert into recurring_rules (user_id, description, type, amount_minor, currency, wallet_id,
+                                        category_id, day_of_month, next_run)
+           values (%(user_id)s, %(description)s, %(type)s, %(amount_minor)s, %(currency)s, %(wallet_id)s,
+                   %(category_id)s, %(day_of_month)s, %(next_run)s) returning id""",
+        {**r, "user_id": user_id},
+    ).fetchone()["id"]
+
+
+def recurring(conn, user_id: int) -> list[dict]:
+    return conn.execute(
+        """select r.*, w.name as wallet_name, c.name as category_name, c.emoji
+           from recurring_rules r join wallets w on w.id = r.wallet_id
+           left join categories c on c.id = r.category_id
+           where r.user_id = %s and r.active order by r.day_of_month, r.id""",
+        (user_id,),
+    ).fetchall()
+
+
+def stop_recurring(conn, user_id: int, rule_id: int) -> int:
+    return conn.execute(
+        "update recurring_rules set active = false where id = %s and user_id = %s and active", (rule_id, user_id)
+    ).rowcount
+
+
+def due_recurring(conn, user_id: int, today: date) -> list[dict]:
+    return conn.execute(
+        """select * from recurring_rules where user_id = %s and active and next_run <= %s
+           order by next_run for update""",
+        (user_id, today),
+    ).fetchall()
+
+
+def advance_recurring(conn, rule_id: int, next_run: date) -> None:
+    conn.execute("update recurring_rules set next_run = %s where id = %s", (next_run, rule_id))
+
+
+def set_recurring_link(conn, batch_id, rule_id: int) -> None:
+    conn.execute("update transactions set recurring_id = %s where batch_id = %s", (rule_id, batch_id))

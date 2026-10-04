@@ -39,6 +39,7 @@ class WalletInfo:
     name: str
     currency: str
     is_default: bool = False
+    aliases: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -59,8 +60,13 @@ class ParseContext:
     merchant_rules: dict[str, str] = field(default_factory=dict)
 
     def wallet_by_name(self, name: str) -> Optional[WalletInfo]:
-        n = name.strip().lower()
-        return next((w for w in self.wallets if w.name.lower() == n), None)
+        """Matches the name or an alias, ignoring case, accents and spaces ("tiền mặt" = "tienmat")."""
+        from .text import squash
+
+        n = squash(name)
+        if not n:
+            return None
+        return next((w for w in self.wallets if squash(w.name) == n or n in {squash(a) for a in w.aliases}), None)
 
     def category(self, name: str) -> Optional[CategoryInfo]:
         return next((c for c in self.categories if c.name == name), None)
