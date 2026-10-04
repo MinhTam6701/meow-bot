@@ -139,3 +139,16 @@ def test_typing_text_while_check_is_waiting_logs_normally(env):
 def test_mochi_command_without_budget_explains(env):
     env.say("/start")
     assert "/budget everyday 900" in env.say("/mochi").text
+
+
+def test_pin_notices_and_bots_are_ignored(env):
+    env.say("/start")
+    before = len(env.tg.sent)
+    pin_notice = {"message_id": 9, "chat": {"id": ME, "type": "private"},
+                  "from": {"id": 777, "is_bot": True, "first_name": "meow_bot"},
+                  "pinned_message": {"message_id": 8}}
+    env.bot.process_update(env.conn, {"update_id": 99999, "message": pin_notice})
+    user_pin = {"message_id": 10, "chat": {"id": ME, "type": "private"},
+                "from": {"id": ME, "first_name": "Tam"}, "pinned_message": {"message_id": 8}}
+    env.bot.process_update(env.conn, {"update_id": 99998, "message": user_pin})
+    assert len(env.tg.sent) == before

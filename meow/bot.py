@@ -82,6 +82,8 @@ COMMANDS = [
     ("help", "How to log"),
 ]
 
+SERVICE_KEYS = ("pinned_message", "new_chat_members", "left_chat_member", "message_auto_delete_timer_changed",
+                "chat_background_set", "forum_topic_created", "write_access_allowed")
 TOTAL_WORDS = {"total", "all", "month", "overall", "tong"}
 WALLET_TYPES = {"cash", "bank", "ewallet", "credit"}
 
@@ -123,6 +125,9 @@ class Bot:
         chat = msg["chat"]
         sender = msg.get("from") or {}
         if chat.get("type") != "private":
+            return
+        # Service notices (a message was pinned, etc.) and messages from bots, including our own pins
+        if sender.get("is_bot") or any(k in msg for k in SERVICE_KEYS):
             return
         if not self.allowed(sender.get("id", 0)):
             self.tg.send_message(chat["id"], "🐱 Sorry, M.E.O.W. is a private bot for now.")
