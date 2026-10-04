@@ -50,6 +50,7 @@ Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
 /budget – monthly budgets
 /balance – wallet balances
 /wallet – add or list wallets
+/wallet check – choose which wallets the monthly check covers
 /recurring – rent and bills that log themselves
 /remind – daily reminder time
 /mochi – how Mochi is doing
@@ -66,7 +67,7 @@ COMMANDS = [
     ("month", "This month by category"),
     ("budget", "Monthly budgets, e.g. /budget Food 400"),
     ("balance", "Wallet balances"),
-    ("wallet", "Add or list wallets"),
+    ("wallet", "Wallets: list, add, or /wallet check to pick checked ones"),
     ("setbalance", "Set a wallet balance, e.g. /setbalance DBS 2340.50"),
     ("recurring", "Rent and bills that log themselves"),
     ("remind", "Daily reminder, e.g. /remind 21:30"),
@@ -78,7 +79,7 @@ COMMANDS = [
     ("mochi", "How Mochi is doing"),
     ("streak", "Your logging streak"),
     ("report", "Last month's report"),
-    ("check", "Check wallet balances"),
+    ("check", "Check balances (pick wallets: /wallet check)"),
     ("help", "How to log"),
 ]
 
@@ -1000,7 +1001,8 @@ class Bot:
         conn.execute("delete from reconciliations where user_id = %s and month = %s and status = 'pending'", (uid, month))
         if not db.start_reconciliation(conn, uid, month) and not db.next_reconciliation(conn, uid, month):
             self.tg.send_message(chat_id, "✅ All wallets were already checked this month. "
-                                          "Fix one any time with /setbalance.")
+                                          "Fix one any time with /setbalance.\n"
+                                          "Choose which wallets get checked: <code>/wallet check DBS VPBank VCB</code>")
             return
         self.send_next_check(conn, user, chat_id, month)
 
