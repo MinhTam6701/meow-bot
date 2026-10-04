@@ -106,7 +106,7 @@ def test_start_seeds_wallets_and_categories(env):
     assert "DBS" in msg.text and "VP" in msg.text
     wallets = env.conn.execute("select name, currency, is_default from wallets order by id").fetchall()
     assert [(w["name"], w["currency"], w["is_default"]) for w in wallets] == [("DBS", "SGD", True), ("VP", "VND", True)]
-    assert env.conn.execute("select count(*) n from categories").fetchone()["n"] == 9
+    assert env.conn.execute("select count(*) n from categories").fetchone()["n"] == 19
     env.say("/start")  # idempotent
     assert env.conn.execute("select count(*) n from wallets").fetchone()["n"] == 2
 
@@ -152,10 +152,10 @@ def test_change_category_and_wallet(env):
     tx_id = int(next(b for b in buttons(card.markup) if b.startswith("cat:")).split(":")[1])
 
     picker = env.press(f"cat:{tx_id}", card.id)
-    bills = next(b for b in buttons(picker.markup) if b.startswith(f"setcat:{tx_id}:") and "Bills" in str(picker.markup))
-    bills_id = env.conn.execute("select id from categories where name = 'Bills'").fetchone()["id"]
+    bills = next(b for b in buttons(picker.markup) if b.startswith(f"setcat:{tx_id}:") and "Housing" in str(picker.markup))
+    bills_id = env.conn.execute("select id from categories where name = 'Housing'").fetchone()["id"]
     edit = env.press(f"setcat:{tx_id}:{bills_id}", card.id)
-    assert "Bills" in edit.text
+    assert "Housing" in edit.text
 
     wal_picker = env.press(f"wal:{tx_id}", card.id)
     assert len([b for b in buttons(wal_picker.markup) if b.startswith("setwal:")]) == 2  # DBS + Cash, not VP
@@ -181,7 +181,7 @@ def test_llm_fallback_logs_cost_and_saves(env):
     env.say("/start")
     env.llm.queue.append({"entries": [{"amount": "23", "currency": "SGD", "type": "expense", "category": "Other",
                                        "description": "haircut", "date": "2026-09-29"}]})
-    card = env.say("paid 23 for the haircut")
+    card = env.say("paid 23 for the thing at the market")
     assert "haircut" in card.text and "S$23.00" in card.text
     call = env.conn.execute("select * from llm_calls").fetchone()
     assert call["ok"] and call["input_tokens"] == 1000 and float(call["cost_usd"]) == pytest.approx(0.0015)
