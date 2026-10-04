@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from meow.config import get_settings  # noqa: E402
-from meow.importer import build_plan, finalize_sql, staging_sql  # noqa: E402
+from meow.importer import CLEANUP, build_plan, finalize_sql, staging_sql  # noqa: E402
 
 
 def main() -> None:
@@ -33,7 +33,7 @@ def main() -> None:
     print(json.dumps(plan.summary(), indent=2, ensure_ascii=False))
     if a.dry_run:
         return
-    stmts = staging_sql(plan) + [finalize_sql(a.telegram_id)]
+    stmts = staging_sql(plan) + [finalize_sql(a.telegram_id), CLEANUP]
     if a.sql_dir:
         os.makedirs(a.sql_dir, exist_ok=True)
         for i, sql in enumerate(stmts, 1):

@@ -22,6 +22,7 @@ def squash(text: str) -> str:
 PHRASE_STOP = {
     "the", "a", "at", "for", "my", "to", "from", "on", "in", "with", "and", "of", "some",
     "mua", "tien", "di", "cho", "va", "vs", "voi", "thang", "den", "cua", "o", "may", "cai", "nhung",
+    "dat", "gui", "ve", "ra", "tu", "len", "xuong",
 }
 # "an" is deliberately not skipped: Vietnamese "ăn" (eat) normalizes to it.
 

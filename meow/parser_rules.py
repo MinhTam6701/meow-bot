@@ -30,7 +30,7 @@ KEYWORDS: dict[str, set[str]] = {
         "sushi", "ramen", "pizza", "bbq", "hotpot", "chicken", "rice", "noodles", "grabfood",
         "foodpanda", "deliveroo", "starbucks", "ansang", "antrua", "antoi", "anvat", "anbanh",
         "trasua", "highlands", "phuclong", "dessert", "juice", "cake", "milk", "sua", "soya", "soy",
-        "suadaunanh", "yogurt", "sandwich", "bakery", "nuoc", "nuocuong", "nuoccam", "nuocep",
+        "suadaunanh", "yogurt", "sandwich", "bakery", "nhahang", "nuoc", "nuocuong", "nuoccam", "nuocep",
         "nuoctao", "nuocloc", "drink", "drinks", "kem", "che", "uongnuoc",
     },
     "Groceries": {
@@ -108,8 +108,12 @@ def _category_for(words: list[str], income_only: bool = False) -> Optional[str]:
     return None
 
 
-def learned_category(description: str, ctx: ParseContext) -> Optional[str]:
+def learned_category(description: str, ctx: ParseContext, phrases_only: bool = False) -> Optional[str]:
+    """A category the user taught the bot. Multi-word phrases first; a single word only if
+    `phrases_only` is False (callers check the keyword table before falling back to it)."""
     for key in phrase_keys(description):
+        if phrases_only and " " not in key and key not in ctx.taught:
+            continue
         if key in ctx.merchant_rules:
             return ctx.merchant_rules[key]
     return None
@@ -187,13 +191,24 @@ def _parse_segment(segment: str, ctx: ParseContext) -> Optional[Entry]:
 
     description = " ".join(words)[:200]
     value, currency = amount.resolve(ctx.home_currency, explicit_currency)
-    learned = learned_category(description, ctx)
-    learned_cat = ctx.category(learned) if learned else None
-    if learned_cat and (not income_sign or learned_cat.type == "income"):
-        return Entry(amount=value, currency=currency, type=learned_cat.type, category=learned,
-                     description=description, date=day, wallet=wallet)
+    has_income_word = _category_for(words, income_only=True) is not None
 
-    category = _category_for(words, income_only=income_sign)
+    def usable(name: Optional[str]):
+        cat = ctx.category(name) if name else None
+        if not cat:
+            return None
+        if cat.type == "income" and not (income_sign or has_income_word):
+            return None  # a learned phrase alone never turns spending into income
+        if cat.type == "expense" and income_sign:
+            return None
+        return cat
+
+    # 1. phrases you taught the bot  2. the keyword table  3. single words you taught the bot
+    cat = usable(learned_category(description, ctx, phrases_only=True))
+    category = cat.name if cat else _category_for(words, income_only=income_sign)
+    if category is None:
+        cat = usable(learned_category(description, ctx))
+        category = cat.name if cat else None
     if category is None:
         if not income_sign:
             return None

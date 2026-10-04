@@ -145,7 +145,7 @@ class Bot:
         uid = user["telegram_id"]
         return ParseContext(today=today, home_currency=user["home_currency"],
                             wallets=db.wallets(conn, uid), categories=db.categories(conn, uid),
-                            merchant_rules=db.active_rules(conn, uid))
+                            merchant_rules=db.active_rules(conn, uid), taught=db.taught_keywords(conn, uid))
 
     def log_money(self, conn, user: dict, chat_id: int, text: str) -> None:
         uid = user["telegram_id"]

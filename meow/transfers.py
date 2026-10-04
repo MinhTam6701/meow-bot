@@ -30,14 +30,21 @@ class TransferRequest:
     received: Optional[tuple[Decimal, Optional[str], bool]] = None  # "as 10tr"
 
 
-def looks_like_transfer(text: str) -> bool:
+def looks_like_transfer(text: str, ctx: Optional[ParseContext] = None) -> bool:
+    """A transfer verb plus a from/to word or a wallet name ("chuyển nhà" = moving house, not a transfer)."""
     words = [normalize(w) for w in text.split()]
-    return bool(words) and (words[0] in VERBS or (words[0] == "top" and len(words) > 1 and words[1] == "up"))
+    if not words or not (words[0] in VERBS or (words[0] == "top" and len(words) > 1 and words[1] == "up")):
+        return False
+    if words[0] in WITHDRAW_VERBS:
+        return True
+    rest = words[1:]
+    names_wallet = ctx is not None and any(ctx.wallet_by_name(w) for w in rest)
+    return names_wallet or any(w in FROM_WORDS | TO_WORDS for w in rest) or "cash" in rest
 
 
 def parse_transfer(text: str, ctx: ParseContext) -> Union[TransferRequest, str, None]:
     """TransferRequest, an error message for the user, or None if it isn't a transfer."""
-    if not looks_like_transfer(text):
+    if not looks_like_transfer(text, ctx):
         return None
     raw = text.replace("=", " = ").replace("→", " to ").replace("->", " to ").split()
     words = [normalize(w) for w in raw]

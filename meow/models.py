@@ -58,6 +58,8 @@ class ParseContext:
     categories: list[CategoryInfo]
     # Learned from corrections: merchant keyword -> category name
     merchant_rules: dict[str, str] = field(default_factory=dict)
+    # Keywords the user taught by correcting entries (these beat the keyword table)
+    taught: set[str] = field(default_factory=set)
 
     def wallet_by_name(self, name: str) -> Optional[WalletInfo]:
         """Matches the name or an alias, ignoring case, accents and spaces ("tiền mặt" = "tienmat")."""

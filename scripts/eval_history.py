@@ -42,7 +42,7 @@ def main() -> None:
         for k in phrase_keys(r["description"]):
             counts[k][r["category"]] += 1
     rules = {k: c.most_common(1)[0][0] for k, c in counts.items()
-             if c.most_common(1)[0][1] >= 2 and c.most_common(1)[0][1] / sum(c.values()) >= 0.8}
+             if c.most_common(1)[0][1] >= (2 if " " in k else 5) and c.most_common(1)[0][1] / sum(c.values()) >= 0.8}
 
     wallets = [WalletInfo(1, "DBS", "SGD", True), WalletInfo(2, "VCB", "VND", True)]
     cats = [CategoryInfo(i, n, e, t) for i, (n, e, t) in enumerate(DEFAULT_CATEGORIES)]

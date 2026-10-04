@@ -110,3 +110,18 @@ def test_rules_listing_and_forget_phrase(env):
                      (ME, cat))
     assert "do nau an → Groceries" in env.say("/rules nau").text
     assert "Forgot" in env.say("/rules forget đồ nấu ăn").text
+
+
+def test_your_corrections_beat_imported_history(env):
+    env.say("/start")
+    transport = one(env, "select id from categories where name = 'Transport'")["id"]
+    fun = one(env, "select id from categories where name = 'Entertainment'")["id"]
+    env.conn.execute("insert into merchant_rules (user_id, keyword, category_id, corrections) values (%s, 'chuyen nha', %s, 14)",
+                     (ME, transport))
+    assert "Transport" in env.say("chuyển nhà 20").text
+    housing = one(env, "select id from categories where name = 'Housing'")["id"]
+    for i in range(2):
+        card = env.say(f"chuyển nhà {21 + i}")
+        tx = int(next(b for b in buttons(card.markup) if b.startswith("cat:")).split(":")[1])
+        env.press(f"setcat:{tx}:{housing}", card.id)
+    assert "Housing" in env.say("chuyển nhà 30").text

@@ -229,6 +229,8 @@ def test_parse_transfer_errors_and_non_transfers():
     ctx = make_context()
     assert "Revolut" in parse_transfer("move 50 from DBS to Revolut", ctx)
     assert parse_transfer("movie 12", ctx) is None
+    assert parse_transfer("chuyển nhà 20", ctx) is None            # moving house
+    assert parse_transfer("chuyển tiền cho Vũ 500k", ctx) is None  # money given to someone
     assert parse_transfer("grab 12", ctx) is None
     w = parse_transfer("withdraw 100 from dbs", ctx)
     assert isinstance(w, TransferRequest) and w.to_wallet is None and w.to_wallet_name == "cash"

@@ -391,9 +391,9 @@ LEARN_AFTER = 2
 
 def record_correction(conn, user_id: int, keyword: str, category_id: int) -> int:
     row = conn.execute(
-        """insert into merchant_rules (user_id, keyword, category_id) values (%s, %s, %s)
+        """insert into merchant_rules (user_id, keyword, category_id, taught) values (%s, %s, %s, true)
            on conflict (user_id, keyword, category_id)
-           do update set corrections = merchant_rules.corrections + 1, updated_at = now()
+           do update set corrections = merchant_rules.corrections + 1, updated_at = now(), taught = true
            returning corrections""",
         (user_id, keyword, category_id),
     ).fetchone()
@@ -406,7 +406,7 @@ def active_rules(conn, user_id: int) -> dict[str, str]:
         """select distinct on (r.keyword) r.keyword, c.name
            from merchant_rules r join categories c on c.id = r.category_id
            where r.user_id = %s and r.corrections >= %s
-           order by r.keyword, r.corrections desc, r.updated_at desc""",
+           order by r.keyword, r.taught desc, r.corrections desc, r.updated_at desc""",
         (user_id, LEARN_AFTER),
     ).fetchall()
     return {r["keyword"]: r["name"] for r in rows}
@@ -543,3 +543,11 @@ def advance_recurring(conn, rule_id: int, next_run: date) -> None:
 
 def set_recurring_link(conn, batch_id, rule_id: int) -> None:
     conn.execute("update transactions set recurring_id = %s where batch_id = %s", (rule_id, batch_id))
+
+
+def taught_keywords(conn, user_id: int) -> set[str]:
+    rows = conn.execute(
+        "select distinct keyword from merchant_rules where user_id = %s and taught and corrections >= %s",
+        (user_id, LEARN_AFTER),
+    ).fetchall()
+    return {r["keyword"] for r in rows}

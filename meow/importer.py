@@ -195,7 +195,8 @@ def build_plan(xlsx_path: str, backup_path: Optional[str]) -> Plan:
     for k, c in counts.items():
         (cat, _), n = c.most_common(1)[0]
         total = sum(c.values())
-        if n >= 2 and n / total >= 0.8:
+        min_uses = 2 if " " in k else 5  # single words need more evidence
+        if n >= min_uses and n / total >= 0.8:
             plan.rules.append({"keyword": k, "category": cat, "count": n})
     return plan
 
@@ -203,12 +204,11 @@ def build_plan(xlsx_path: str, backup_path: Optional[str]) -> Plan:
 # --- applying ---------------------------------------------------------------------
 
 STAGING = """
-drop table if exists import_staging_rows, import_staging_meta;
-create table import_staging_rows (
+create table if not exists import_staging_rows (
     type text, day date, wallet text, currency text, amount_minor bigint, category text,
     description text, batch text, import_key text
 );
-create table import_staging_meta (kind text, payload jsonb);
+create table if not exists import_staging_meta (kind text, payload jsonb);
 alter table import_staging_rows enable row level security;
 alter table import_staging_meta enable row level security;
 """
@@ -220,7 +220,7 @@ def _lit(obj) -> str:
 
 def staging_sql(plan: Plan, chunk: int = 400) -> list[str]:
     """SQL statements to load the plan into staging tables (split into chunks)."""
-    stmts = [STAGING]
+    stmts = [CLEANUP, STAGING]
     meta = {"wallets": plan.wallets, "fx": plan.fx, "balances": plan.balances, "rules": plan.rules,
             "first_day": str(plan.first_day), "last_day": str(plan.last_day)}
     stmts.append("insert into import_staging_meta values " +
@@ -317,7 +317,7 @@ begin
     join categories c on c.user_id = {uid} and c.name = r->>'category'
     on conflict (user_id, keyword, category_id)
     do update set corrections = greatest(merchant_rules.corrections, excluded.corrections);
-
-    drop table import_staging_rows, import_staging_meta;
 end $$;
 """
+
+CLEANUP = "drop table if exists import_staging_rows, import_staging_meta;"
