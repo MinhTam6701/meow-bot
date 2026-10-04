@@ -4,9 +4,3 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .vercel
-# Personal finance exports and backups: never commit
-*.xlsx
-*.xls
-*.csv
-*.mmbackup
-private/

@@ -90,7 +90,7 @@ def test_llm_entries_are_validated_and_cleaned():
         {"amount": "23", "currency": "sgd", "type": "expense", "category": "Haircuts",
          "description": "haircut", "date": TODAY.isoformat(), "wallet": "Citibank"},
     ]})
-    result = parse_message("paid 23 for the thing at the market", make_context(), llm_client=client, on_llm_call=logs.append)
+    result = parse_message("paid 23 for the haircut", make_context(), llm_client=client, on_llm_call=logs.append)
     assert result.parser == "llm"
     e = result.entries[0]
     assert (e.amount, e.currency, e.category, e.wallet) == (Decimal("23"), "SGD", "Other", None)
@@ -121,7 +121,7 @@ def test_llm_call_matches_real_sdk_signature():
     from anthropic.resources.messages import Messages
 
     client = FakeClient({"entries": []})
-    parse_message("paid 23 for the thing at the market", make_context(), llm_client=client)
+    parse_message("paid 23 for the haircut", make_context(), llm_client=client)
     allowed = inspect.signature(Messages.create).parameters
     unknown = set(client.calls[0]) - set(allowed)
     assert not unknown, f"not accepted by anthropic SDK: {unknown}"
@@ -138,6 +138,6 @@ def test_llm_api_error_is_logged_not_raised():
             raise RuntimeError("overloaded")
 
     logs = []
-    result = parse_message("paid 23 for the thing at the market", make_context(), llm_client=Boom(), on_llm_call=logs.append)
+    result = parse_message("paid 23 for the haircut", make_context(), llm_client=Boom(), on_llm_call=logs.append)
     assert result.question and not result.entries
     assert logs[0].ok is False and "overloaded" in logs[0].error

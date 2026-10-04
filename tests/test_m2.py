@@ -138,15 +138,15 @@ def test_pause_button(env):
 
 def test_learns_after_two_corrections(env):
     env.say("/start")
-    fun = one(env, "select id from categories where name = 'Entertainment'")["id"]
+    fun = one(env, "select id from categories where name = 'Fun'")["id"]
     for i in range(2):
         card = env.say(f"grab {10 + i}")
         tx = int(next(b for b in buttons(card.markup) if b.startswith("cat:")).split(":")[1])
         env.press(f"setcat:{tx}:{fun}", card.id)
-    assert env.tg.answers[-1] == '🧠 Learned: "grab" → Entertainment from now on.'
+    assert env.tg.answers[-1] == '🧠 Learned: "grab" → Fun from now on.'
     card = env.say("grab 9")
-    assert "Entertainment" in card.text
-    assert "grab → Entertainment" in env.say("/rules").text
+    assert "Fun" in card.text
+    assert "grab → Fun" in env.say("/rules").text
     env.say("/rules forget grab")
     assert "Transport" in env.say("grab 8").text
 
@@ -188,10 +188,10 @@ def test_budget_alerts_at_80_and_100(env):
     assert "S$20.00" in env.say("/budget Food 20").text
     assert "budget" not in env.say("lunch 14").text            # 70%
     warn = env.say("coffee 3").text                              # 85%
-    assert "⚠️ <b>Food &amp; Drinks</b> budget: S$17.00 / S$20.00 (85%)" in warn
+    assert "⚠️ <b>Food</b> budget: S$17.00 / S$20.00 (85%)" in warn
     assert "budget" not in env.say("kopi 1").text               # 90%, no new crossing
     over = env.say("cake 4").text                                # 110%
-    assert "🚨 <b>Food &amp; Drinks</b> budget: S$22.00 / S$20.00 (110%)" in over
+    assert "🚨 <b>Food</b> budget: S$22.00 / S$20.00 (110%)" in over
     listing = env.say("/budget").text
     assert "▓" in listing and "(110%)" in listing
     assert "budget 110%" in env.say("/month").text

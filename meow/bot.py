@@ -4,7 +4,6 @@ The same Bot is used by the Vercel webhook, the scheduler endpoint and the local
 """
 from __future__ import annotations
 
-import calendar
 import logging
 import random
 import re
@@ -20,12 +19,11 @@ from . import db, fx
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
-from .models import CategoryInfo, Entry, ParseContext, WalletInfo
+from .models import Entry, ParseContext, WalletInfo
 from .money import CURRENCY_ALIASES, fmt, parse_amount_token, to_minor
 from .parser import has_amount, parse_message
 from .parser_llm import cost_usd
-from .parser_rules import parse_with_rules
-from .text import phrase_keys, phrase_words
+from .parser_rules import merchant_key, parse_with_rules
 from .personas import LANGUAGES, PERSONAS, ROAST_LABELS, line as persona_line
 from .telegram import TelegramAPI
 from .transfers import TransferRequest, parse_transfer
@@ -50,7 +48,6 @@ Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
 /budget – monthly budgets
 /balance – wallet balances
 /wallet – add or list wallets
-/recurring – rent and bills that log themselves
 /remind – daily reminder time
 /persona – who talks to you
 /settings – your settings
@@ -64,7 +61,6 @@ COMMANDS = [
     ("balance", "Wallet balances"),
     ("wallet", "Add or list wallets"),
     ("setbalance", "Set a wallet balance, e.g. /setbalance DBS 2340.50"),
-    ("recurring", "Rent and bills that log themselves"),
     ("remind", "Daily reminder, e.g. /remind 21:30"),
     ("persona", "Pick a persona and roast level"),
     ("language", "Persona language: EN, VI or mix"),
@@ -182,8 +178,7 @@ class Bot:
         since = self.clock() - timedelta(days=1)
         llm_allowed = db.llm_calls_since(conn, uid, since) < self.s.llm_daily_call_cap
         result = parse_message(to_parse, ctx, llm_client=self.llm, model=self.s.anthropic_model,
-                               on_llm_call=llm_logs.append, llm_allowed=llm_allowed,
-                               examples=lambda t: self.similar_examples(conn, uid, t))
+                               on_llm_call=llm_logs.append, llm_allowed=llm_allowed)
         for call in llm_logs:
             db.log_llm_call(conn, uid, "parse", call,
                             cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
@@ -346,42 +341,6 @@ class Bot:
                 out.append(f"<i>{escape(said, quote=False)}</i>")
         return out
 
-    def similar_examples(self, conn, uid: int, text: str, k: int = 8) -> list[tuple[str, str]]:
-        """This user's past entries that share the most words with the message (for Claude)."""
-        want = set(phrase_words(text))
-        if not want:
-            return []
-        scored = []
-        for r in db.past_descriptions(conn, uid):
-            have = set(phrase_words(r["description"]))
-            overlap = len(want & have)
-            if overlap:
-                scored.append((overlap / len(want | have), r["n"], r["description"], r["category"]))
-        scored.sort(key=lambda x: (-x[0], -x[1]))
-        out, seen = [], set()
-        for _, _, d, c in scored:
-            if d.lower() not in seen:
-                seen.add(d.lower())
-                out.append((d, c))
-            if len(out) == k:
-                break
-        return out
-
-    def find_category(self, conn, uid: int, name: str, type_: str = "expense") -> tuple[Optional[CategoryInfo], str]:
-        """Case-insensitive, accepts a prefix ("food" -> Food & Drinks). Returns (category, error)."""
-        cats = [c for c in db.categories(conn, uid) if c.type == type_]
-        n = name.strip().lower()
-        exact = [c for c in cats if c.name.lower() == n]
-        if exact:
-            return exact[0], ""
-        prefix = [c for c in cats if c.name.lower().startswith(n)]
-        if len(prefix) == 1:
-            return prefix[0], ""
-        names = ", ".join(c.name for c in cats)
-        if prefix:
-            return None, f"\"{escape(name)}\" could be {escape(', '.join(c.name for c in prefix))}. Be more specific."
-        return None, f"I don't have a category called \"{escape(name)}\".\nCategories: {escape(names)}"
-
     # ------------------------------------------------------------------ transfers
     def do_transfer(self, conn, user: dict, chat_id: int, ctx: ParseContext, t: TransferRequest, raw: str) -> None:
         uid, home, today = user["telegram_id"], user["home_currency"], ctx.today
@@ -510,21 +469,10 @@ class Bot:
         self.tg.send_message(chat_id, "\n".join(lines))
 
     def cmd_balance(self, conn, user, chat_id, args, **_):
-        home, today = user["home_currency"], self.today_for(user)
         rows = db.balances(conn, user["telegram_id"])
         lines = ["👛 <b>Balances</b>", ""]
-        total, missing = 0, False
-        for r in rows:
-            note = " · not in total" if not r["in_total"] else ""
-            lines.append(f"{escape(r['name'])}: <b>{fmt(r['balance_minor'], r['currency'])}</b>{note}")
-            if r["in_total"]:
-                rate = self.home_rate(conn, home, r["currency"], today)
-                if rate:
-                    total += fx.to_home(r["balance_minor"], r["currency"], home, rate)
-                else:
-                    missing = True
-        lines += ["", f"Total ≈ <b>{fmt(total, home)}</b>" + (" (some wallets have no rate yet)" if missing else ""),
-                  "Fix a wallet with /setbalance if it doesn't match your bank."]
+        lines += [f"{escape(r['name'])}: <b>{fmt(r['balance_minor'], r['currency'])}</b>" for r in rows]
+        lines += ["", "Balances start from zero until you set them with /setbalance."]
         self.tg.send_message(chat_id, "\n".join(lines))
 
     def cmd_setbalance(self, conn, user, chat_id, args, **_):
@@ -600,9 +548,10 @@ class Bot:
         if name.lower() in TOTAL_WORDS:
             cat_id, label = None, "Total"
         else:
-            cat, err = self.find_category(conn, uid, name)
+            cat = next((c for c in db.categories(conn, uid) if c.name.lower() == name.lower() and c.type == "expense"), None)
             if cat is None:
-                self.tg.send_message(chat_id, err)
+                names = ", ".join(c.name for c in db.categories(conn, uid) if c.type == "expense")
+                self.tg.send_message(chat_id, f"I don't have a category called \"{escape(name)}\".\nCategories: {escape(names)}")
                 return
             cat_id, label = cat.id, cat.name
         if value.lower() in ("off", "remove", "delete", "0"):
@@ -717,97 +666,18 @@ class Bot:
     def cmd_rules(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]
         parts = args.split()
-        if len(parts) >= 2 and parts[0].lower() == "forget":
-            phrase = " ".join(parts[1:])
-            keys = phrase_keys(phrase)
-            n = db.forget_rule(conn, uid, keys[0]) if keys else 0
-            self.tg.send_message(chat_id, f"Forgot \"{escape(phrase)}\"." if n else "I didn't have a rule for that.")
+        if len(parts) == 2 and parts[0].lower() == "forget":
+            n = db.forget_rule(conn, uid, parts[1].lower())
+            self.tg.send_message(chat_id, f"Forgot \"{escape(parts[1])}\"." if n else "I didn't have a rule for that.")
             return
         rules = db.active_rules(conn, uid)
         if not rules:
             self.tg.send_message(chat_id, "🧠 No learned rules yet. When you change an entry's category twice for "
                                           "the same shop (e.g. Grab → Transport), I'll remember it.")
             return
-        shown = sorted(rules.items())
-        if parts:  # /rules taxi -> only rules containing that word
-            shown = [(k, v) for k, v in shown if any(p.lower() in k for p in parts)]
-        lines = [f"🧠 <b>What I've learned</b> ({len(rules)} phrases)", ""]
-        lines += [f"• {escape(k)} → {escape(v)}" for k, v in shown[:40]]
-        if len(shown) > 40:
-            lines.append(f"…and {len(shown) - 40} more. Search with <code>/rules taxi</code>.")
+        lines = ["🧠 <b>What I've learned</b>", ""] + [f"• {escape(k)} → {escape(v)}" for k, v in sorted(rules.items())]
         lines += ["", "Forget one: <code>/rules forget grab</code>"]
         self.tg.send_message(chat_id, "\n".join(lines))
-
-    def cmd_recurring(self, conn, user, chat_id, args, **_):
-        uid, home, today = user["telegram_id"], user["home_currency"], self.today_for(user)
-        usage = ("Add one: <code>/recurring add rent 800 on 1</code> (logs on the 1st of every month)\n"
-                 "Stop one: <code>/recurring stop 2</code>")
-        parts = args.split()
-        if not parts:
-            rules = db.recurring(conn, uid)
-            if not rules:
-                self.tg.send_message(chat_id, f"🔁 <b>Recurring</b>\n\nNothing yet.\n{usage}")
-                return
-            lines = ["🔁 <b>Recurring</b>", ""]
-            for r in rules:
-                sign = "+" if r["type"] == "income" else ""
-                lines.append(f"{r['id']}. {r['emoji'] or '•'} {escape(r['description'])} — {sign}"
-                             f"{fmt(r['amount_minor'], r['currency'])} · {escape(r['wallet_name'])} · "
-                             f"day {r['day_of_month']} · next {r['next_run'].strftime('%d %b')}")
-            self.tg.send_message(chat_id, "\n".join(lines + ["", usage]))
-            return
-        if parts[0].lower() in ("stop", "remove", "delete") and len(parts) == 2 and parts[1].isdigit():
-            n = db.stop_recurring(conn, uid, int(parts[1]))
-            self.tg.send_message(chat_id, "🔁 Stopped." if n else "I couldn't find that one. See /recurring.")
-            return
-        m = re.fullmatch(r"add\s+(.+?)\s+(?:on|day|ngay|ngày)\s+(\d{1,2})(?:st|nd|rd|th)?", args.strip(), re.IGNORECASE)
-        if not m or not 1 <= int(m[2]) <= 31:
-            self.tg.send_message(chat_id, usage)
-            return
-        ctx = self.context(conn, user, today)
-        entries = parse_with_rules(m[1], ctx)
-        if not entries or len(entries) != 1:
-            self.tg.send_message(chat_id, "I couldn't read that as one entry. Try <code>/recurring add rent 800 on 1</code> "
-                                          "or name the category: <code>/recurring add netflix 19.98 on 15</code>.")
-            return
-        rows, question = self.resolve(conn, user, ctx, entries)
-        if question:
-            self.tg.send_message(chat_id, escape(question))
-            return
-        row, dom = rows[0], int(m[2])
-        next_run = next_monthly(today, dom, include_today=False)
-        rid = db.add_recurring(conn, uid, {
-            "description": row["description"], "type": row["type"], "amount_minor": abs(row["amount_minor"]),
-            "currency": row["currency"], "wallet_id": row["wallet_id"], "category_id": row["category_id"],
-            "day_of_month": dom, "next_run": next_run})
-        self.tg.send_message(chat_id, f"🔁 Added #{rid}: <b>{escape(row['description'])}</b> "
-                                      f"{fmt(abs(row['amount_minor']), row['currency'])} on day {dom} of every month. "
-                                      f"First one: {next_run.strftime('%a %d %b')}.")
-
-    def run_recurring(self, conn, user: dict, today: date) -> int:
-        """Log every recurring entry that is due, and tell the user. Returns how many."""
-        uid, home = user["telegram_id"], user["home_currency"]
-        done = 0
-        for r in db.due_recurring(conn, uid, today):
-            run_day = r["next_run"]
-            row = self.with_home(conn, home, {
-                "wallet_id": r["wallet_id"], "category_id": r["category_id"], "type": r["type"],
-                "amount_minor": r["amount_minor"] if r["type"] == "income" else -r["amount_minor"],
-                "currency": r["currency"], "description": r["description"], "occurred_on": run_day})
-            batch_id = db.insert_transactions(conn, uid, [row], raw_message=f"recurring #{r['id']}",
-                                              parser="command", source="recurring")
-            db.set_recurring_link(conn, batch_id, r["id"])
-            db.advance_recurring(conn, r["id"], next_monthly(run_day, r["day_of_month"], include_today=False))
-            note = "<i>🔁 Logged automatically (recurring). Undo if it didn't happen this month.</i>"
-            batch = db.get_batch(conn, batch_id)
-            for b in batch:
-                b["card_note"] = note
-            text_out, kb = render_card(batch, today, self.footer(conn, user, today), home)
-            sent = self.tg.send_message(uid, text_out, reply_markup=kb)
-            if sent:
-                db.set_card(conn, batch_id, uid, sent["message_id"], note)
-            done += 1
-        return done
 
     # ------------------------------------------------------------------ buttons
     def on_callback(self, conn, cq: dict) -> None:
@@ -875,16 +745,13 @@ class Bot:
             self.tg.answer_callback_query(cq["id"], note)
 
     def learn(self, conn, uid: int, tx: dict, category_id: int) -> Optional[str]:
-        """Remember the correction for the phrase's first two words and its first word."""
-        keys = phrase_keys(tx["description"] or "")[-2:]  # e.g. ['grab work', 'grab']
-        learned = None
-        for key in keys:
-            if db.record_correction(conn, uid, key, category_id) == db.LEARN_AFTER:
-                learned = learned or key
-        if learned:
+        key = merchant_key(tx["description"] or "")
+        if not key:
+            return None
+        if db.record_correction(conn, uid, key, category_id) == db.LEARN_AFTER:
             cat = next((c for c in db.categories(conn, uid) if c.id == category_id), None)
             if cat:
-                return f"🧠 Learned: \"{learned}\" → {cat.name} from now on."
+                return f"🧠 Learned: \"{key}\" → {cat.name} from now on."
         return None
 
     def on_reminder_button(self, conn, uid: int, rest: str, chat_id: int, message_id: int) -> Optional[str]:
@@ -965,16 +832,7 @@ class Bot:
             for home in homes or {self.s.home_currency}:
                 stats["fx"] = fx.ensure_rates(conn, home, now.date(), self.fx_fetch) or stats["fx"]
             stats["backfilled"] = fx.backfill(conn)
-        stats["recurring"] = 0
-        for user in conn.execute("select * from users order by telegram_id").fetchall():
-            today = now.astimezone(ZoneInfo(user["timezone"])).date()
-            try:
-                with conn.transaction():
-                    stats["recurring"] += self.run_recurring(conn, user, today)
-            except Exception:
-                log.exception("recurring failed for user %s", user["telegram_id"])
-            if not (user["reminders_on"] or user["snooze_until"]):
-                continue
+        for user in db.users_for_tick(conn):
             try:
                 with conn.transaction():
                     if self.maybe_remind(conn, user, now):
@@ -1007,14 +865,3 @@ class Bot:
         self.tg.send_message(uid, f"{escape(said, quote=False)}\n\nReply with entries (<code>lunch 12, grab 9</code>) "
                                   "or just today's total (<code>45</code>).", reply_markup=reminder_keyboard())
         return True
-
-
-def next_monthly(after: date, day_of_month: int, include_today: bool = False) -> date:
-    """Next date with that day of month (clamped to the month's length) after `after`."""
-    y, m = after.year, after.month
-    for _ in range(2):
-        d = date(y, m, min(day_of_month, calendar.monthrange(y, m)[1]))
-        if d > after or (include_today and d == after):
-            return d
-        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-    return d
