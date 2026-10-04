@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest>=8
 uvicorn>=0.30
+# for scripts/import_moneymanager.py and scripts/eval_history.py
+pandas>=2
+openpyxl>=3.1
