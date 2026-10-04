@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterator, Optional
 
 import psycopg
@@ -551,3 +551,138 @@ def taught_keywords(conn, user_id: int) -> set[str]:
         (user_id, LEARN_AFTER),
     ).fetchall()
     return {r["keyword"] for r in rows}
+
+
+# --- M3: streak & Mochi ------------------------------------------------------------
+
+def logged_days(conn, user_id: int, since: date) -> set[date]:
+    """Days that count for the streak: real entries (not auto-logged bills) or a no-spend mark."""
+    rows = conn.execute(
+        """select occurred_on as d from live_transactions
+           where user_id = %s and occurred_on >= %s and type in ('expense', 'income') and source <> 'recurring'
+           union
+           select day from day_marks where user_id = %s and day >= %s""",
+        (user_id, since, user_id, since),
+    ).fetchall()
+    return {r["d"] for r in rows}
+
+
+# Fixed costs that don't count against the everyday budget (and don't affect Mochi).
+FIXED_CATEGORIES = ("Housing", "Phone", "Subscriptions & Fees", "Education")
+
+
+def everyday_spent(conn, user_id: int, start: date, end: date) -> int:
+    """Everyday spending in home currency between start (incl.) and end (excl.): no auto-logged bills,
+    no fixed-cost categories, no purchases tagged #planned."""
+    row = conn.execute(
+        """select coalesce(-sum(t.amount_home), 0)::bigint as s
+           from transactions t left join categories c on c.id = t.category_id
+           where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
+             and t.source <> 'recurring' and coalesce(t.description, '') not ilike '%%#planned%%'
+             and coalesce(c.name, '') <> all(%s)""",
+        (user_id, start, end, list(FIXED_CATEGORIES)),
+    ).fetchone()
+    return row["s"]
+
+
+def spent_for_mochi(conn, user_id: int, day: date) -> int:
+    return everyday_spent(conn, user_id, day, day + timedelta(days=1))
+
+
+def no_spend_marked(conn, user_id: int, day: date) -> bool:
+    return conn.execute("select 1 from day_marks where user_id = %s and day = %s", (user_id, day)).fetchone() is not None
+
+
+def mochi_state(conn, user_id: int) -> Optional[dict]:
+    return conn.execute("select * from mochi_state where user_id = %s", (user_id,)).fetchone()
+
+
+def ensure_mochi(conn, user_id: int, today: date) -> dict:
+    conn.execute(
+        "insert into mochi_state (user_id, started_on) values (%s, %s) on conflict do nothing", (user_id, today))
+    return mochi_state(conn, user_id)
+
+
+def save_mochi_day(conn, user_id: int, day: date, spent: int, bowl: int, s) -> bool:
+    row = conn.execute(
+        """insert into mochi_log (user_id, day, spent_minor, bowl_minor, result, delta, weight_after, away_after)
+           values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing returning day""",
+        (user_id, day, spent, bowl, s.result, s.delta, s.weight, s.away),
+    ).fetchone()
+    if row:
+        conn.execute(
+            """update mochi_state set weight = %s, away = %s, last_scored_on = %s, updated_at = now()
+               where user_id = %s""",
+            (s.weight, s.away, day, user_id))
+    return row is not None
+
+
+def recent_mochi_results(conn, user_id: int, n: int = 2) -> list[str]:
+    rows = conn.execute(
+        "select result from mochi_log where user_id = %s order by day desc limit %s", (user_id, n)).fetchall()
+    return [r["result"] for r in reversed(rows)]
+
+
+def set_pinned(conn, user_id: int, message_id: Optional[int]) -> None:
+    conn.execute("update mochi_state set pinned_message_id = %s where user_id = %s", (message_id, user_id))
+
+
+def mochi_history(conn, user_id: int, days: int = 7) -> list[dict]:
+    return conn.execute(
+        "select * from mochi_log where user_id = %s order by day desc limit %s", (user_id, days)).fetchall()
+
+
+def set_everyday_budget(conn, user_id: int, minor: Optional[int]) -> None:
+    conn.execute("update users set everyday_budget_minor = %s where telegram_id = %s", (minor, user_id))
+
+
+def set_awaiting(conn, user_id: int, value: Optional[str]) -> None:
+    conn.execute("update users set awaiting = %s where telegram_id = %s", (value, user_id))
+
+
+# --- M3: monthly report & balance check -------------------------------------------
+
+def claim_report(conn, user_id: int, month: date) -> bool:
+    return conn.execute(
+        "insert into monthly_reports (user_id, month) values (%s, %s) on conflict do nothing returning month",
+        (user_id, month)).fetchone() is not None
+
+
+def set_report_message(conn, user_id: int, month: date, message_id: int) -> None:
+    conn.execute("update monthly_reports set message_id = %s where user_id = %s and month = %s",
+                 (message_id, user_id, month))
+
+
+def start_reconciliation(conn, user_id: int, month: date) -> int:
+    rows = conn.execute(
+        """insert into reconciliations (user_id, wallet_id, month)
+           select user_id, id, %s from wallets where user_id = %s and check_monthly and not archived
+           on conflict do nothing returning wallet_id""",
+        (month, user_id)).fetchall()
+    return len(rows)
+
+
+def next_reconciliation(conn, user_id: int, month: date) -> Optional[dict]:
+    return conn.execute(
+        """select r.*, w.name, w.currency from reconciliations r join wallets w on w.id = r.wallet_id
+           where r.user_id = %s and r.month = %s and r.status = 'pending'
+           order by w.id limit 1""",
+        (user_id, month)).fetchone()
+
+
+def finish_reconciliation(conn, user_id: int, wallet_id: int, month: date, status: str,
+                          expected: Optional[int], actual: Optional[int]) -> bool:
+    row = conn.execute(
+        """update reconciliations set status = %s, expected = %s, actual = %s,
+                  difference = case when %s::bigint is null then null else %s::bigint - %s::bigint end,
+                  answered_at = now()
+           where user_id = %s and wallet_id = %s and month = %s and status = 'pending' returning wallet_id""",
+        (status, expected, actual, actual, actual, expected, user_id, wallet_id, month)).fetchone()
+    return row is not None
+
+
+def reconciliation_summary(conn, user_id: int, month: date) -> list[dict]:
+    return conn.execute(
+        """select r.*, w.name, w.currency from reconciliations r join wallets w on w.id = r.wallet_id
+           where r.user_id = %s and r.month = %s order by w.id""",
+        (user_id, month)).fetchall()

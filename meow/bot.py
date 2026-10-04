@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import db, fx
+from . import db, fx, mochi, report, streak as streaks
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
@@ -52,6 +52,10 @@ Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
 /wallet – add or list wallets
 /recurring – rent and bills that log themselves
 /remind – daily reminder time
+/mochi – how Mochi is doing
+/streak – your logging streak
+/report – last month's report
+/check – check balances against your bank apps
 /persona – who talks to you
 /settings – your settings
 /undo – undo the last entry
@@ -71,6 +75,10 @@ COMMANDS = [
     ("rules", "Categories I've learned"),
     ("settings", "Your settings"),
     ("undo", "Undo the last entry"),
+    ("mochi", "How Mochi is doing"),
+    ("streak", "Your logging streak"),
+    ("report", "Last month's report"),
+    ("check", "Check wallet balances"),
     ("help", "How to log"),
 ]
 
@@ -129,7 +137,13 @@ class Bot:
             self.tg.send_message(chat["id"], "I only read text messages for now. Photos and voice notes are coming later 🐾")
             return
 
+        if user.get("awaiting") and not text.startswith("/"):
+            if self.on_awaited(conn, user, chat["id"], text):
+                return
+
         if text.startswith("/"):
+            if user.get("awaiting"):
+                db.set_awaiting(conn, user["telegram_id"], None)
             cmd, _, args = text.partition(" ")
             cmd = cmd[1:].split("@")[0].lower()
             handler = getattr(self, f"cmd_{cmd}", None)
@@ -218,8 +232,12 @@ class Bot:
             db.set_pending(conn, uid, raw)
             self.tg.send_message(chat_id, escape(question))
             return
+        streak_before = self.streak(conn, uid, today).current
         batch_id = db.insert_transactions(conn, uid, rows, raw_message=raw, parser=parser, source=source)
         note = self.compose_note(conn, user, rows, today)
+        reached = streaks.milestone_reached(streak_before, self.streak(conn, uid, today).current)
+        if reached:
+            note = (note + "\n" if note else "") + f"🔥 <b>{reached}-day streak!</b> " + MILESTONE_LINES[reached]
         batch = db.get_batch(conn, batch_id)
         for r in batch:
             r["card_note"] = note
@@ -230,7 +248,91 @@ class Bot:
 
     def footer(self, conn, user: dict, today: date) -> str:
         spent, missing = db.spent_on_home(conn, user["telegram_id"], today)
-        return totals_line_home(user["home_currency"], spent, missing)
+        line = totals_line_home(user["home_currency"], spent, missing)
+        status = self.mochi_line(conn, user, today)
+        return f"{line}\n{status}" if status else line
+
+    # ------------------------------------------------------------------ streak & Mochi
+    def streak(self, conn, uid: int, today: date) -> streaks.Streak:
+        return streaks.compute(db.logged_days(conn, uid, today - timedelta(days=400)), today)
+
+    def mochi_line(self, conn, user: dict, today: date) -> Optional[str]:
+        uid, budget = user["telegram_id"], user.get("everyday_budget_minor")
+        state = db.mochi_state(conn, uid) if budget else None
+        if not state:
+            return None
+        s = self.streak(conn, uid, today).current
+        return mochi.status_line(state["weight"], state["away"], db.spent_for_mochi(conn, uid, today),
+                                 mochi.bowl(budget, today), user["home_currency"],
+                                 no_spend_marked=db.no_spend_marked(conn, uid, today),
+                                 accessory=streaks.accessory(s), streak=s)
+
+    def mochi_card(self, conn, user: dict, today: date) -> str:
+        uid = user["telegram_id"]
+        line = self.mochi_line(conn, user, today)
+        if not line:
+            return ("🐱 <b>Mochi</b> eats what you don't spend, but she needs a daily bowl first.\n"
+                    "Set your everyday budget (without rent and bills): <code>/budget everyday 900</code>")
+        state = db.mochi_state(conn, uid)
+        st = self.streak(conn, uid, today)
+        hist = db.mochi_history(conn, uid, 7)
+        week = " ".join(f"{mochi.RESULTS[h['result']]:+d}" for h in reversed(hist)) or "no days scored yet"
+        bowl = mochi.bowl(user["everyday_budget_minor"], today)
+        return (f"🐱 <b>Mochi</b>\n\n{line}\n\n"
+                f"Daily bowl: {fmt(bowl, user['home_currency'])} (everyday budget ÷ days in the month)\n"
+                "Housing, phone, subscriptions, study and anything tagged #planned don't count.\n"
+                f"Last 7 days: {week}\n"
+                f"Streak: {st.current} days · best {st.best}"
+                + (f" · next milestone {st.next_milestone}" if st.next_milestone else "")
+                + (f"\nAccessory: {streaks.accessory(st.current)}" if streaks.accessory(st.current) else "")
+                + ("" if state["weight"] < 90 else "\n👑 Chonky King!"))
+
+    def refresh_pinned(self, conn, user: dict, today: date) -> None:
+        """Keep one pinned message with Mochi's status at the top of the chat."""
+        uid = user["telegram_id"]
+        state = db.mochi_state(conn, uid)
+        line = self.mochi_line(conn, user, today)
+        if not state or not line:
+            return
+        text = f"📌 {line}\n<i>Updated {today.strftime('%a %d %b')}</i>"
+        if state["pinned_message_id"]:
+            try:
+                self.tg.edit_message_text(uid, state["pinned_message_id"], text, None)
+                return
+            except Exception:
+                log.info("pinned message gone, sending a new one")
+        sent = self.tg.send_message(uid, text, silent=True)
+        if sent:
+            try:
+                self.tg.pin_chat_message(uid, sent["message_id"])
+            except Exception:
+                log.exception("could not pin")
+            db.set_pinned(conn, uid, sent["message_id"])
+
+    def score_mochi(self, conn, user: dict, today: date) -> int:
+        """Score every finished day not yet scored (normally just yesterday). Returns days scored."""
+        uid, budget = user["telegram_id"], user.get("everyday_budget_minor")
+        state = db.mochi_state(conn, uid)
+        if not budget or not state:
+            return 0
+        day = (state["last_scored_on"] + timedelta(days=1)) if state["last_scored_on"] else state["started_on"]
+        scored, last = 0, None
+        weight, away = state["weight"], state["away"]
+        logged = db.logged_days(conn, uid, day - timedelta(days=1))
+        while day < today:
+            spent = db.spent_for_mochi(conn, uid, day)
+            bowl = mochi.bowl(budget, day)
+            result = mochi.result_for(spent, bowl, day in logged)
+            last = mochi.score(weight, away, result, db.recent_mochi_results(conn, uid))
+            if db.save_mochi_day(conn, uid, day, spent, bowl, last):
+                weight, away, scored = last.weight, last.away, scored + 1
+            day += timedelta(days=1)
+        if scored and last:
+            said = self.say(user, "no_spend") if last.result == "no_spend" else None
+            self.tg.send_message(uid, "🌙 <b>Mochi's verdict for yesterday</b>\n" + mochi.verdict(last)
+                                 + (f"\n<i>{escape(said, quote=False)}</i>" if said else ""), silent=True)
+            self.refresh_pinned(conn, db.get_user(conn, uid), today)
+        return scored
 
     # ------------------------------------------------------------------ money helpers
     def home_rate(self, conn, home: str, currency: str, day: date) -> Optional[Decimal]:
@@ -572,17 +674,23 @@ class Bot:
 
     def cmd_budget(self, conn, user, chat_id, args, **_):
         uid, home = user["telegram_id"], user["home_currency"]
-        usage = ("Set one with <code>/budget Food 400</code> or <code>/budget total 2000</code>.\n"
+        usage = ("Set one with <code>/budget Food 400</code>, <code>/budget total 2000</code> or "
+                 "<code>/budget everyday 900</code> (feeds Mochi).\n"
                  "Remove one with <code>/budget Food off</code>.")
         if not args:
             today = self.today_for(user)
             first = today.replace(day=1)
             spent = db.month_spent_home(conn, uid, first, (first + timedelta(days=32)).replace(day=1))
             items = db.budgets(conn, uid)
-            if not items:
+            everyday = user.get("everyday_budget_minor")
+            if not items and not everyday:
                 self.tg.send_message(chat_id, f"💰 <b>Budgets</b>\n\nNo budgets yet. {usage}")
                 return
             lines = [f"💰 <b>Budgets</b> · {first.strftime('%B')}", ""]
+            if everyday:
+                e = db.everyday_spent(conn, uid, first, (first + timedelta(days=32)).replace(day=1))
+                lines.append(f"🐱 Everyday (Mochi · no rent, bills, study)\n{bud.bar(e, everyday)} {fmt(e, home)} / {fmt(everyday, home)} "
+                             f"({bud.pct(e, everyday)}%)")
             for b in items:
                 s = spent.get(b["category_id"], 0)
                 label = f"{b['emoji']} {escape(b['name'])}" if b["name"] else "🧮 Total"
@@ -597,6 +705,25 @@ class Bot:
             self.tg.send_message(chat_id, usage)
             return
         name, value = " ".join(parts[:-1]), parts[-1]
+        if name.lower() in ("everyday", "daily", "mochi"):
+            if value.lower() in ("off", "remove", "0"):
+                db.set_everyday_budget(conn, uid, None)
+                self.tg.send_message(chat_id, "Everyday budget removed. Mochi is taking a nap until you set one again.")
+                return
+            tok = parse_amount_token(value)
+            if tok is None:
+                self.tg.send_message(chat_id, "Try <code>/budget everyday 900</code>")
+                return
+            minor = to_minor(tok.value, home)
+            db.set_everyday_budget(conn, uid, minor)
+            today = self.today_for(user)
+            db.ensure_mochi(conn, uid, today)
+            self.tg.send_message(chat_id, f"🐱 Everyday budget: <b>{fmt(minor, home)}</b> a month "
+                                          f"(housing, phone, subscriptions, study and #planned buys don't count).\n"
+                                          f"Mochi's bowl today: <b>{fmt(mochi.bowl(minor, today), home)}</b>. "
+                                          f"She eats what you don't spend!")
+            self.refresh_pinned(conn, db.get_user(conn, uid), today)
+            return
         if name.lower() in TOTAL_WORDS:
             cat_id, label = None, "Total"
         else:
@@ -809,6 +936,145 @@ class Bot:
             done += 1
         return done
 
+    def cmd_mochi(self, conn, user, chat_id, args, **_):
+        today = self.today_for(user)
+        self.tg.send_message(chat_id, self.mochi_card(conn, user, today))
+        self.refresh_pinned(conn, user, today)
+
+    def cmd_streak(self, conn, user, chat_id, args, **_):
+        today = self.today_for(user)
+        st = self.streak(conn, user["telegram_id"], today)
+        lines = [f"🔥 <b>{st.current}-day streak</b> · best {st.best}"]
+        if not st.logged_today:
+            lines.append("Log something today (or tap “No spend today” at the check-in) to keep it going.")
+        if st.freezes_used:
+            lines.append("🧊 Freezes used: " + ", ".join(d.strftime("%d %b") for d in st.freezes_used))
+        if st.next_milestone:
+            lines.append(f"Next milestone: {st.next_milestone} days ({st.next_milestone - st.current} to go)")
+        lines.append("\nA day counts if you log anything or mark it as no-spend. Miss one day after logging "
+                     "5 of the previous 7, and a weekly freeze covers it.")
+        self.tg.send_message(chat_id, "\n".join(lines))
+
+    def cmd_report(self, conn, user, chat_id, args, **_):
+        today = self.today_for(user)
+        month = report.previous_month(today)
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})", args.strip())
+        if m:
+            month = date(int(m[1]), int(m[2]), 1)
+        elif args.strip().lower() in ("this", "now", "current"):
+            month = today.replace(day=1)
+        self.tg.send_message(chat_id, report.build(conn, user, month))
+
+    def cmd_check(self, conn, user, chat_id, args, **_):
+        uid = user["telegram_id"]
+        month = self.today_for(user).replace(day=1)
+        conn.execute("delete from reconciliations where user_id = %s and month = %s and status = 'pending'", (uid, month))
+        if not db.start_reconciliation(conn, uid, month) and not db.next_reconciliation(conn, uid, month):
+            self.tg.send_message(chat_id, "✅ All wallets were already checked this month. "
+                                          "Fix one any time with /setbalance.")
+            return
+        self.send_next_check(conn, user, chat_id, month)
+
+    def maybe_monthly_report(self, conn, user: dict, now: datetime) -> bool:
+        """On the 1st from 09:00 (local), send last month's report and start the balance check."""
+        local = now.astimezone(ZoneInfo(user["timezone"]))
+        if local.day != 1 or local.hour < 9:
+            return False
+        uid = user["telegram_id"]
+        month = report.previous_month(local.date())
+        if not db.claim_report(conn, uid, month):
+            return False
+        said = self.say(user, "report")
+        sent = self.tg.send_message(uid, report.build(conn, user, month, said))
+        if sent:
+            db.set_report_message(conn, uid, month, sent["message_id"])
+        check_month = local.date().replace(day=1)
+        if db.start_reconciliation(conn, uid, check_month):
+            self.tg.send_message(uid, "🏦 <b>Balance check</b>\nOpen your bank apps: I'll ask about each wallet.")
+            self.send_next_check(conn, user, uid, check_month)
+        return True
+
+    def send_next_check(self, conn, user: dict, chat_id: int, month: date) -> None:
+        uid = user["telegram_id"]
+        r = db.next_reconciliation(conn, uid, month)
+        if r is None:
+            rows = db.reconciliation_summary(conn, uid, month)
+            done = [x for x in rows if x["status"] in ("matched", "adjusted")]
+            matched = [x for x in rows if x["status"] == "matched"]
+            lines = [f"✅ <b>Balance check done</b> · {len(matched)}/{len(done)} matched"]
+            for x in rows:
+                if x["status"] == "adjusted":
+                    lines.append(f"• {escape(x['name'])}: off by {fmt(x['difference'], x['currency'])} (fixed)")
+            self.tg.send_message(chat_id, "\n".join(lines))
+            return
+        expected = db.wallet_balance(conn, r["wallet_id"])
+        tag = month.strftime("%Y%m")
+        self.tg.send_message(
+            chat_id, f"🏦 <b>{escape(r['name'])}</b> should be <b>{fmt(expected, r['currency'])}</b>.\n"
+                     "Does your bank app match?",
+            reply_markup={"inline_keyboard": [[
+                {"text": "✅ Matches", "callback_data": f"rc:ok:{r['wallet_id']}:{tag}"},
+                {"text": "✏️ Different", "callback_data": f"rc:diff:{r['wallet_id']}:{tag}"},
+                {"text": "Skip", "callback_data": f"rc:skip:{r['wallet_id']}:{tag}"},
+            ]]})
+
+    def on_recon_button(self, conn, uid: int, rest: str, chat_id: int, message_id: int) -> Optional[str]:
+        what, wallet_id, tag = rest.split(":")
+        wallet_id, month = int(wallet_id), date(int(tag[:4]), int(tag[4:]), 1)
+        user = db.get_user(conn, uid)
+        w = conn.execute("select name, currency from wallets where id = %s and user_id = %s",
+                         (wallet_id, uid)).fetchone()
+        if not w:
+            return "That wallet isn't available."
+        expected = db.wallet_balance(conn, wallet_id)
+        if what == "ok":
+            if db.finish_reconciliation(conn, uid, wallet_id, month, "matched", expected, expected):
+                self.tg.edit_message_text(chat_id, message_id, f"✅ {escape(w['name'])} matches: {fmt(expected, w['currency'])}")
+                self.send_next_check(conn, user, chat_id, month)
+            return "Matched"
+        if what == "skip":
+            if db.finish_reconciliation(conn, uid, wallet_id, month, "skipped", None, None):
+                self.tg.edit_message_text(chat_id, message_id, f"⏭ {escape(w['name'])} skipped")
+                self.send_next_check(conn, user, chat_id, month)
+            return None
+        db.set_awaiting(conn, uid, f"recon:{wallet_id}:{month.isoformat()}")
+        self.tg.edit_message_text(chat_id, message_id,
+                                  f"✏️ What does your bank app show for <b>{escape(w['name'])}</b>? "
+                                  f"Type the number, e.g. <code>{fmt(expected, w['currency']).lstrip('S$').rstrip('₫')}</code>")
+        return None
+
+    def on_awaited(self, conn, user: dict, chat_id: int, text: str) -> bool:
+        """Handle a typed answer the bot asked for. Returns False to treat it as a normal message."""
+        uid, kind = user["telegram_id"], user["awaiting"]
+        if not kind.startswith("recon:"):
+            db.set_awaiting(conn, uid, None)
+            return False
+        _, wallet_id, month = kind.split(":")
+        tok = parse_amount_token(text.replace(" ", "").replace("S$", "").replace("₫", ""))
+        if tok is None:
+            db.set_awaiting(conn, uid, None)
+            return False  # not a number: treat as a normal entry
+        wallet_id, month = int(wallet_id), date.fromisoformat(month)
+        w = conn.execute("select name, currency from wallets where id = %s", (wallet_id,)).fetchone()
+        expected = db.wallet_balance(conn, wallet_id)
+        actual = to_minor(tok.value, w["currency"])
+        diff = actual - expected
+        db.set_awaiting(conn, uid, None)
+        if diff:
+            row = self.with_home(conn, user["home_currency"], {
+                "wallet_id": wallet_id, "category_id": None, "type": "adjustment", "amount_minor": diff,
+                "currency": w["currency"], "description": f"Balance check {month.strftime('%b %Y')}",
+                "occurred_on": self.today_for(user)})
+            db.insert_transactions(conn, uid, [row], raw_message=text, parser="command", source="reconcile")
+        db.finish_reconciliation(conn, uid, wallet_id, month, "adjusted" if diff else "matched", expected, actual)
+        sign = "+" if diff > 0 else ""
+        msg = (f"✏️ {escape(w['name'])} set to <b>{fmt(actual, w['currency'])}</b> "
+               f"(difference {sign}{fmt(diff, w['currency'])} recorded as an adjustment)." if diff
+               else f"✅ {escape(w['name'])} matches after all.")
+        self.tg.send_message(chat_id, msg)
+        self.send_next_check(conn, user, chat_id, month)
+        return True
+
     # ------------------------------------------------------------------ buttons
     def on_callback(self, conn, cq: dict) -> None:
         uid = cq["from"]["id"]
@@ -864,6 +1130,9 @@ class Bot:
                     if action == "setcat":
                         note = self.learn(conn, uid, tx, int(target)) or note
 
+            elif action == "rc":
+                note = self.on_recon_button(conn, uid, rest, chat_id, message_id)
+
             elif action == "eod":
                 note = self.on_reminder_button(conn, uid, rest, chat_id, message_id)
 
@@ -894,6 +1163,7 @@ class Bot:
             if db.spent_anything_on(conn, uid, today):
                 return "You already logged spending today 🙂"
             db.mark_no_spend(conn, uid, today)
+            self.refresh_pinned(conn, user, today)
             said = self.say(user, "no_spend")
             self.tg.edit_message_text(chat_id, message_id,
                                       "😻 <b>No-spend day saved.</b>" + (f"\n<i>{escape(said, quote=False)}</i>" if said else ""))
@@ -973,6 +1243,17 @@ class Bot:
                     stats["recurring"] += self.run_recurring(conn, user, today)
             except Exception:
                 log.exception("recurring failed for user %s", user["telegram_id"])
+            try:
+                with conn.transaction():
+                    stats["mochi"] = stats.get("mochi", 0) + self.score_mochi(conn, user, today)
+            except Exception:
+                log.exception("mochi scoring failed for user %s", user["telegram_id"])
+            try:
+                with conn.transaction():
+                    if self.maybe_monthly_report(conn, user, now):
+                        stats["reports"] = stats.get("reports", 0) + 1
+            except Exception:
+                log.exception("monthly report failed for user %s", user["telegram_id"])
             if not (user["reminders_on"] or user["snooze_until"]):
                 continue
             try:
@@ -1018,3 +1299,12 @@ def next_monthly(after: date, day_of_month: int, include_today: bool = False) ->
             return d
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return d
+
+
+MILESTONE_LINES = {
+    3: "A good start. Mochi noticed. 🐾",
+    7: "One full week! Mochi earned a bell 🔔",
+    14: "Two weeks straight. This is a habit now.",
+    30: "A whole month! Mochi got a scarf 🧣",
+    100: "100 days! Mochi wears a crown 👑",
+}

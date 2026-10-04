@@ -30,9 +30,13 @@ class TelegramAPI:
             raise TelegramError(f"{method}: {desc}")
         return data.get("result")
 
-    def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> dict:
+    def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict] = None, silent: bool = False) -> dict:
         return self.call("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML",
-                         reply_markup=reply_markup, link_preview_options={"is_disabled": True})
+                         reply_markup=reply_markup, link_preview_options={"is_disabled": True},
+                         disable_notification=silent or None)
+
+    def pin_chat_message(self, chat_id: int, message_id: int):
+        return self.call("pinChatMessage", chat_id=chat_id, message_id=message_id, disable_notification=True)
 
     def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup: Optional[dict] = None):
         return self.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text,

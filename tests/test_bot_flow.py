@@ -31,10 +31,13 @@ class FakeTelegram:
     def __init__(self):
         self.sent, self.edits, self.answers, self.next_id = [], [], [], 500
 
-    def send_message(self, chat_id, text, reply_markup=None):
+    def send_message(self, chat_id, text, reply_markup=None, silent=False):
         self.next_id += 1
-        self.sent.append(SimpleNamespace(chat_id=chat_id, text=text, markup=reply_markup, id=self.next_id))
+        self.sent.append(SimpleNamespace(chat_id=chat_id, text=text, markup=reply_markup, id=self.next_id, silent=silent))
         return {"message_id": self.next_id}
+
+    def pin_chat_message(self, chat_id, message_id):
+        self.pinned = message_id
 
     def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
         self.edits.append(SimpleNamespace(kind="text", message_id=message_id, text=text, markup=reply_markup))

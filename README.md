@@ -108,6 +108,16 @@ Supabase runs `pg_cron` every 15 minutes and calls the Vercel app with an `X-Cro
 (stored in Supabase Vault as `meow_cron_secret`). Each tick fetches the day's rates once, fills in any
 entries saved while rates were unavailable, and sends due check-ins. Every step is safe to repeat.
 
+## M3 features
+
+| Feature | How it works |
+|---|---|
+| Mochi 🐱 | `/budget everyday 900` gives her a daily bowl (budget ÷ days). Scored just after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2 (max ±3). At 0 she goes to grandma's; 3 good days bring her back. Housing, phone, subscriptions, study, recurring bills and `#planned` buys don't count. |
+| Status | A Mochi line on every card, and a pinned message updated each night. `/mochi` for details. |
+| Streak 🔥 | A day counts if you log anything or mark no-spend. One freeze a week bridges a single missed day after 5 of 7 logged days. Milestones 3, 7, 14, 30, 100 (bell, scarf, crown). `/streak`. |
+| Monthly report | 1st at 09:00: totals vs last month, categories with trends, top 3, budget scorecard, fun facts, one tip. `/report` or `/report 2026-09` any time. |
+| Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (type the real number, the gap becomes an adjustment) / skip. `/check` any time. Only wallets with `check_monthly`. |
+
 ## Importing Money Manager history
 
 ```bash

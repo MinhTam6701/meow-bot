@@ -21,6 +21,10 @@ LANGUAGES = {"en": "English", "vi": "Tiếng Việt", "mix": "Mix"}
 
 LINES: dict[str, dict[str, dict[str, dict[str, list[str]]]]] = {
     "cat": {
+        "report": {
+            "soft": {"en": ["A new month! Here's what happened to the treats budget. 🐾"], "vi": ["Tháng mới rồi! Xem tháng trước mình tiêu gì nha. 🐾"]},
+            "spicy": {"en": ["Monthly audit. I've seen everything. Everything. 😼"], "vi": ["Kiểm toán cuối tháng. Mèo thấy hết rồi đó. 😼"]},
+        },
         "expense": {
             "soft": {"en": ["Noted. I'm watching. 🐾", "Purr-fectly logged.", "Into the ledger it goes. 😺"],
                      "vi": ["Ghi rồi nha. Mèo đang theo dõi đó. 🐾", "Xong! Sổ sách gọn gàng. 😺"]},
@@ -57,6 +61,10 @@ LINES: dict[str, dict[str, dict[str, dict[str, list[str]]]]] = {
         },
     },
     "mom": {
+        "report": {
+            "soft": {"en": ["Month done! Let Mom see how you did."], "vi": ["Hết tháng rồi! Cho mẹ xem con tiêu thế nào nào."]},
+            "spicy": {"en": ["Report card time. Don't hide anything from Mom."], "vi": ["Đến giờ xem bảng điểm. Không được giấu mẹ cái gì đâu."]},
+        },
         "expense": {
             "soft": {"en": ["OK, Mom wrote it down. 📒", "Good, you're keeping track. Mom is proud."],
                      "vi": ["Rồi, mẹ ghi lại rồi nha. 📒", "Ngoan, biết ghi chép là tốt."]},
@@ -90,6 +98,10 @@ LINES: dict[str, dict[str, dict[str, dict[str, list[str]]]]] = {
         },
     },
     "monk": {
+        "report": {
+            "soft": {"en": ["A month has passed. Let us look at it calmly. 🧘"], "vi": ["Một tháng đã trôi qua. Hãy cùng nhìn lại thật bình thản. 🧘"]},
+            "spicy": {"en": ["To see where the money went is the first step to letting it stay."], "vi": ["Biết tiền đi đâu là bước đầu để giữ nó lại."]},
+        },
         "expense": {
             "soft": {"en": ["Noted. Breathe in, breathe out. 🍃", "Each coin has its path."],
                      "vi": ["Đã ghi. Hít vào, thở ra. 🍃", "Mỗi đồng tiền đều có con đường của nó."]},
