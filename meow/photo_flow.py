@@ -1,7 +1,8 @@
 """Photos and screenshots: read them, log what's clear, ask about the rest.
 
 Asked first (buttons), never logged straight away:
-- dup:    the same amount and currency is already logged within a day (a week if the photo has no date)
+- dup:    the same amount and currency is already logged within a day (a week if the photo has no date, or
+          says today: screenshots of recent payments often show only a time, and the date gets filled in)
 - own:    money sent to or from the user's own name (probably moving money between their accounts)
 - person: money sent to a person (spending? own account? don't log?)
 - big:    a large amount (PHOTO_CONFIRM_ABOVE in home currency)
@@ -119,7 +120,7 @@ class PhotoFlow:
 
         flags: list[str] = []
         dup = db.find_duplicate(conn, uid, entry.currency, row["amount_minor"], entry.type, entry.date,
-                                window_days=7 if p.date is None else 1)
+                                window_days=7 if p.date in (None, ctx.today) else 1)
         dup_text = None
         if dup:
             flags.append("dup")

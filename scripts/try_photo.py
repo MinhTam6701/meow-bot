@@ -4,6 +4,7 @@
 
 Keep your screenshots in the private/ folder: git ignores it, so they're never committed.
 """
+import glob
 import mimetypes
 import sys
 from datetime import date
@@ -15,6 +16,7 @@ import anthropic  # noqa: E402
 from meow import db, vision  # noqa: E402
 from meow.config import get_settings  # noqa: E402
 from meow.models import ParseContext  # noqa: E402
+from meow.money import to_minor  # noqa: E402
 
 
 def main(paths: list[str]) -> None:
@@ -39,15 +41,26 @@ def main(paths: list[str]) -> None:
                 print(f"  {p.type} {p.amount} {p.currency} | {p.description} | {p.category} | "
                       f"date {p.date or '(none, today would be used)'} | wallet {p.wallet or '(default)'} | "
                       f"to {p.counterparty or '-'} ({p.counterparty_kind}) | note {p.note or '-'}")
-                if p.date:
-                    sign = -1 if p.type == "expense" else 1
-                    from meow.money import to_minor
-                    dup = db.find_duplicate(conn, uid, p.currency, sign * to_minor(p.amount, p.currency), p.type, p.date)
-                    if dup:
+                day = p.date or ctx.today
+                window = 7 if day == ctx.today else 1  # same rule as the bot
+                sign = -1 if p.type == "expense" else 1
+                dup = db.find_duplicate(conn, uid, p.currency, sign * to_minor(p.amount, p.currency), p.type, day,
+                                        window_days=window)
+                if dup:
                         print(f"  ↳ looks already logged: {dup['description']} on {dup['occurred_on']}")
 
 
+def expand(args: list[str]) -> list[str]:
+    """Windows PowerShell doesn't expand private/*.jpg, so do it here."""
+    out = []
+    for a in args:
+        matches = sorted(glob.glob(a)) if any(ch in a for ch in "*?[") else [a]
+        out += matches
+    return out
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
-    main(sys.argv[1:])
+    files = expand(sys.argv[1:])
+    if not files:
+        sys.exit(__doc__ + "\nNo files found. Put screenshots in the private folder first.")
+    main(files)

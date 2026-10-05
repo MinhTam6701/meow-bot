@@ -97,9 +97,18 @@ def test_guessed_date_widens_the_duplicate_check(env):
     # No date on the Shopee screenshot: today (29 Sep) is a guess, so 26 Sep still counts as a match.
     msg = photo(env, pay("71.99", desc="Shopee vacuum", cat="Shopping", day=None))
     assert "looks already logged" in msg.text
-    # With a real date three days away, it's a different purchase.
-    card = photo(env, pay("71.99", desc="Shopee vacuum", cat="Shopping", day="2026-09-29"))
+    # With a printed date (not today) three days away, it's a different purchase.
+    card = photo(env, pay("71.99", desc="Shopee vacuum", cat="Shopping", day="2026-09-23"))
     assert "Logged" in card.text
+
+
+def test_date_filled_in_as_today_still_finds_the_earlier_entry(env):
+    """The real case: a Shopee order screenshot with no order date, read as today's date."""
+    env.say("/start")
+    env.say("shopee 71.99 yesterday")
+    env.conn.execute("update transactions set occurred_on = '2026-09-27' where description = 'shopee'")
+    msg = photo(env, pay("71.99", desc="Russell Taylors cordless vacuum", cat="Shopping", day="2026-09-29"))
+    assert "looks already logged" in msg.text and "shopee · S$71.99 · DBS · Sun 27 Sep" in msg.text
 
 
 def test_money_to_a_person_asks_what_it_was(env):

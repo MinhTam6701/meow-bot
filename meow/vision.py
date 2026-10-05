@@ -111,8 +111,10 @@ Rules:
   On a receipt, the final total including tax and service charge, not a subtotal or a line item.
 - Vietnamese amounts use spaces, dots or commas as thousand separators: "3 468 000 đ" is 3468000 VND.
   "$" in a Singapore app (DBS, PayLah, Shopee SG, Grab SG) is SGD.
-- Date: from the image. Dates like 08/09/2026 are day/month/year. If only "7 minutes ago" is shown,
-  use the date in the phone's status bar. If no year is shown, use the most recent past date. Omit if unknown.
+- Date: only the payment or order date printed in the image. Dates like 08/09/2026 are day/month/year.
+  If only "7 minutes ago" is shown, use the date in the phone's status bar. If no year is shown, use the most
+  recent past date. A delivery date, a clock time alone, or today's date are NOT the payment date:
+  if no payment date is printed, omit it (the app will handle it).
 - Wallet: DBS for DBS/POSB digibank, PayLah, a DBS Visa card, or a dark "You send SGD" transfer screen with a
   272-xxxxxx-x style account. VPBank for VPBank screens, VCB for Vietcombank / VCB Digibank. Otherwise omit.
 - counterparty_kind: 'person' for an individual's name (e.g. "TRAN CAM VAN", a PayNow name),
