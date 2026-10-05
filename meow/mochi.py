@@ -80,11 +80,27 @@ def score(weight: int, away: bool, result: str, recent_results: list[str]) -> Da
 ART_DIR = Path(__file__).resolve().parent.parent / "assets" / "mochi"
 
 
-def art(weight: int, away: bool) -> Optional[str]:
-    """Which picture of Mochi: skinny below 40, neutral 40-69, fat from 70. None while she's at grandma's."""
+# For a day's result: a no-spend day shows her asleep; a bad day shows her sad.
+MOOD_ART = {"no_spend": "sleeping", "over": "sad", "splurge": "sad", "silent": "sad"}
+
+
+def art_candidates(weight: int, away: bool, result: Optional[str] = None) -> list[str]:
+    """Pictures to try, best first; the bot uses the first one whose file exists, so new art can be
+    added later just by dropping in a file. Body: skinny < 40, neutral 40-69, fat 70-89, king 90+."""
     if away:
-        return None
-    return "fat" if weight >= 70 else "neutral" if weight >= 40 else "skinny"
+        return ["away"]
+    body = "fat" if weight >= 70 else "neutral" if weight >= 40 else "skinny"
+    names = [body]
+    if weight >= 90:
+        names.insert(0, "king")
+    if result in MOOD_ART:
+        names.insert(0, MOOD_ART[result])
+    return names
+
+
+def art(weight: int, away: bool, result: Optional[str] = None) -> Optional[str]:
+    """The picture to send, or None if there is none (e.g. no 'away' art yet)."""
+    return next((n for n in art_candidates(weight, away, result) if (ART_DIR / f"{n}.jpg").exists()), None)
 
 
 def stage(weight: int) -> str:

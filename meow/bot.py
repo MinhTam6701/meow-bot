@@ -459,7 +459,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
         if scored and last:
             said = self.say(user, "no_spend") if last.result == "no_spend" else None
             self.send_mochi(conn, user, uid, "🌙 <b>Mochi's verdict for yesterday</b>\n" + mochi.verdict(last)
-                            + (f"\n<i>{escape(said, quote=False)}</i>" if said else ""), silent=True)
+                            + (f"\n<i>{escape(said, quote=False)}</i>" if said else ""), silent=True,
+                            result=last.result)
             self.refresh_pinned(conn, db.get_user(conn, uid), today)
         return scored
 
@@ -1229,10 +1230,12 @@ class Bot(PhotoFlow, SubscriptionFlow):
         self.send_mochi(conn, user, chat_id, self.mochi_card(conn, user, today))
         self.refresh_pinned(conn, user, today)
 
-    def send_mochi(self, conn, user: dict, chat_id: int, caption: str, silent: bool = False) -> None:
-        """Mochi's picture for her current stage, with `caption`; plain text if there's no picture or it fails."""
+    def send_mochi(self, conn, user: dict, chat_id: int, caption: str, silent: bool = False,
+                   result: Optional[str] = None) -> None:
+        """Mochi's picture for her stage (and the day's mood, for the verdict), with `caption`;
+        plain text if there's no picture or it fails."""
         state = db.mochi_state(conn, user["telegram_id"])
-        name = mochi.art(state["weight"], state["away"]) if state else None
+        name = mochi.art(state["weight"], state["away"], result) if state else None
         path = mochi.ART_DIR / f"{name}.jpg" if name else None
         if path and path.exists() and len(caption) <= 1024:
             data = path.read_bytes()
