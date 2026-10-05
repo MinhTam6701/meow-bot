@@ -10,17 +10,17 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).resolve().parent
-FPS = 25
+FPS = 30
 
 
-def render(scene: str, seconds: float, out_dir: Path) -> None:
+def render(scene: str, seconds: float, out_dir: Path, page_file: str = "mochi.html", size: int = 480) -> None:
     frames = out_dir / f"frames_{scene}"
     shutil.rmtree(frames, ignore_errors=True)
     frames.mkdir(parents=True)
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 480, "height": 480}, device_scale_factor=1)
-        page.goto((HERE / "mochi.html").as_uri())
+        page = browser.new_page(viewport={"width": size, "height": size}, device_scale_factor=1)
+        page.goto((HERE / page_file).as_uri())
         svg = page.locator("#stage")
         for i in range(int(seconds * FPS)):
             page.evaluate(f"draw('{scene}', {i / FPS})")
@@ -41,4 +41,5 @@ def render(scene: str, seconds: float, out_dir: Path) -> None:
 if __name__ == "__main__":
     out = Path(sys.argv[3]) if len(sys.argv) > 3 else HERE / "out"
     out.mkdir(exist_ok=True)
-    render(sys.argv[1], float(sys.argv[2]), out)
+    page_file = sys.argv[4] if len(sys.argv) > 4 else "mochi.html"
+    render(sys.argv[1], float(sys.argv[2]), out, page_file, 540 if "soft" in page_file else 480)
