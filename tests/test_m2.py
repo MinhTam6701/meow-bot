@@ -163,15 +163,13 @@ def test_persona_flow_and_plain_mode(env):
     assert "Sample:" in edit.text
     assert one(env, "select persona, roast_level from users") == {"persona": "mom", "roast_level": 3}
     card = env.say("bubble tea 7")
-    assert "<i>" in card.text
+    assert "<i>" not in card.text            # the card holds numbers only
+    assert env.tg.reactions[-1].startswith("👩")  # the persona talks in its own message
+    assert "Asian Mom" in env.llm.chats[-1]["system"]
     env.press("pers:plain", env.say("/persona").id)
-    assert "<i>" not in env.say("kopi 2").text
-
-
-def test_big_expense_gets_big_comment(env):
-    env.say("/start")
-    card = env.say("dinner 120")
-    assert "S$120.00" in card.text.split("<i>")[1]  # the persona line names the amount
+    before = len(env.llm.chats)
+    env.say("kopi 2")
+    assert len(env.llm.chats) == before and len(env.tg.reactions) == 1
 
 
 def test_language_setting(env):

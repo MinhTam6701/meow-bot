@@ -99,7 +99,7 @@ select parser, count(distinct batch_id) from transactions where reverses_id is n
 | End-of-day check-in | At 21:30 (`/remind` to change), only if nothing was logged. Buttons: no-spend day, remind in 1h, skip, pause. Reply `45` to log a day total. |
 | Exchange rates | Daily rates (incl. VND) from open.er-api.com. Every entry stores its SGD amount; `/month` is all in SGD. |
 | Learning | Change a shop's category twice (e.g. grab → Fun) and it's remembered. `/rules` to see or forget. |
-| Personas | `/persona`: Sassy Cat, Asian Mom, Zen Monk or Plain; roast level 0–3; `/language` EN, VI or mix. Lines are pre-written, so no extra AI cost. |
+| Personas | `/persona`: Sassy Cat, Asian Mom, Zen Monk or Plain; roast level 0–3; `/language` EN, VI or mix. After each entry the persona replies in its own message (Claude Haiku). Code gives it the facts: your usual price for that item, today's spending, Mochi's bowl, budget alerts. It questions odd prices, and you can answer it for 30 minutes. If Claude is down, a pre-written line is used. `PERSONA_MODEL` picks the model; `python scripts/try_persona.py` shows sample replies. |
 | Budgets | `/budget Food 400`, `/budget total 2000`. Alerts on the card at 80% and 100%. |
 | Transfers & wallets | `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr`. `/wallet add GrabPay SGD ewallet`. |
 

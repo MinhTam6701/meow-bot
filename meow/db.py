@@ -696,3 +696,30 @@ def checked_wallet_ids(conn, user_id: int) -> set[int]:
 
 def set_checked_wallets(conn, user_id: int, wallet_ids: list[int]) -> None:
     conn.execute("update wallets set check_monthly = (id = any(%s)) where user_id = %s", (wallet_ids, user_id))
+
+
+# --- persona reactions -----------------------------------------------------------
+
+def price_stats(conn, user_id: int, description: str, category_id: Optional[int], since: date,
+                exclude_batch) -> dict:
+    """How much this user usually pays for this item, and per entry in this category (home currency)."""
+    item = conn.execute(
+        """select count(*) as n,
+                  percentile_cont(0.5) within group (order by -amount_home) as median,
+                  min(-amount_home) as low, max(-amount_home) as high
+           from live_transactions
+           where user_id = %s and type = 'expense' and amount_home is not null and batch_id <> %s
+             and lower(trim(description)) = lower(trim(%s)) and occurred_on >= %s""",
+        (user_id, exclude_batch, description, since)).fetchone()
+    cat = conn.execute(
+        """select count(*) as n, percentile_cont(0.5) within group (order by -amount_home) as median
+           from live_transactions
+           where user_id = %s and type = 'expense' and amount_home is not null and batch_id <> %s
+             and category_id = %s and source <> 'recurring' and occurred_on >= %s""",
+        (user_id, exclude_batch, category_id, since)).fetchone() if category_id else {"n": 0, "median": None}
+    return {"item": item, "category": cat}
+
+
+def set_last_reaction(conn, user_id: int, text: Optional[str], at=None) -> None:
+    conn.execute("update users set last_reaction = %s, last_reaction_at = %s where telegram_id = %s",
+                 (text, at if text else None, user_id))

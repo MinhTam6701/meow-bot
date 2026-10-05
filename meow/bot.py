@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import db, fx, mochi, report, streak as streaks
+from . import db, fx, mochi, persona_llm, report, streak as streaks
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
@@ -82,6 +82,9 @@ COMMANDS = [
     ("check", "Check balances (pick wallets: /wallet check)"),
     ("help", "How to log"),
 ]
+
+PERSONA_ICON = {"cat": "😼", "mom": "👩", "monk": "🧘"}
+CHAT_WINDOW = timedelta(minutes=30)  # a reply without an amount this soon after a reaction is chat
 
 SERVICE_KEYS = ("pinned_message", "new_chat_members", "left_chat_member", "message_auto_delete_timer_changed",
                 "chat_background_set", "forum_topic_created", "write_access_allowed")
@@ -193,6 +196,10 @@ class Bot:
             # The user is answering the bot's question: give the model both parts.
             to_parse = f"{pending}\n\nAnswer to your question: {text}"
 
+        if not pending and not has_amount(text) and self.recent_reaction(user):
+            self.chat_back(conn, user, chat_id, text)
+            return
+
         if not has_amount(to_parse):
             db.set_pending(conn, uid, None)
             self.tg.send_message(chat_id, "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
@@ -251,6 +258,10 @@ class Bot:
         sent = self.tg.send_message(chat_id, text_out, reply_markup=keyboard)
         if sent:
             db.set_card(conn, batch_id, chat_id, sent["message_id"], note)
+        try:
+            self.react(conn, user, chat_id, batch, rows, today, reached)
+        except Exception:  # the entry is saved; a missing comment must never undo it
+            log.exception("persona reaction failed")
 
     def footer(self, conn, user: dict, today: date) -> str:
         spent, missing = db.spent_on_home(conn, user["telegram_id"], today)
@@ -403,25 +414,129 @@ class Bot:
         return wallet
 
     def compose_note(self, conn, user: dict, rows: list[dict], today: date) -> Optional[str]:
-        """Persona line plus any budget alerts this entry triggered."""
+        """Facts for the card: budget alerts this entry triggered. The persona talks in its own message."""
+        return "\n".join(self.budget_alerts(conn, user, rows, today)) or None
+
+    # ------------------------------------------------------------------ persona reactions
+    def llm_ok(self, conn, uid: int) -> bool:
+        if self.llm is None:
+            return False
+        return db.llm_calls_since(conn, uid, self.clock() - timedelta(days=1)) < self.s.llm_daily_call_cap
+
+    def persona_system(self, user: dict) -> str:
+        return persona_llm.build_system(user["persona"], user["roast_level"], user["language"],
+                                        user.get("first_name") or "")
+
+    def send_reaction(self, conn, user: dict, chat_id: int, text: str) -> None:
+        icon = PERSONA_ICON.get(user["persona"], "🐱")
+        self.tg.send_message(chat_id, f"{icon} {escape(text, quote=False)}")
+        db.set_last_reaction(conn, user["telegram_id"], text, self.clock())
+
+    def recent_reaction(self, user: dict) -> bool:
+        at = user.get("last_reaction_at")
+        return bool(user.get("last_reaction") and at and self.clock() - at <= CHAT_WINDOW
+                    and user["persona"] in PERSONA_ICON)
+
+    def react(self, conn, user: dict, chat_id: int, batch: list[dict], rows: list[dict],
+              today: date, reached: Optional[int]) -> None:
+        """The persona's reply to what was just logged, as its own message."""
+        if user["persona"] not in PERSONA_ICON:
+            return  # plain: numbers only
+        uid = user["telegram_id"]
+        text = None
+        if self.llm_ok(conn, uid):
+            facts = self.reaction_facts(conn, user, batch, rows, today, reached)
+            text, call = persona_llm.react(self.llm, self.s.persona_model, self.persona_system(user), facts)
+            db.log_llm_call(conn, uid, "persona", call, cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
+        if not text:
+            text = self.fallback_line(user, rows)
+        if text:
+            self.send_reaction(conn, user, chat_id, text)
+
+    def fallback_line(self, user: dict, rows: list[dict]) -> Optional[str]:
+        """Pre-written line, used when Claude is unavailable."""
         home = user["home_currency"]
-        lines: list[str] = []
-        expenses = [r for r in rows if r["type"] == "expense"]
         if any(r["type"] == "income" for r in rows):
-            situation, facts = "income", {}
-        else:
-            big = max(expenses, key=lambda r: -(r["amount_home"] or 0), default=None)
-            if big and big["amount_home"] is not None and -big["amount_home"] >= to_minor(Decimal(str(self.s.big_expense)), home):
-                situation, facts = "big", {"amount": fmt(-big["amount_home"], home)}
+            return self.say(user, "income")
+        big = max((r for r in rows if r["type"] == "expense" and r["amount_home"] is not None),
+                  key=lambda r: -r["amount_home"], default=None)
+        if big and -big["amount_home"] >= to_minor(Decimal(str(self.s.big_expense)), home):
+            return self.say(user, "big", amount=fmt(-big["amount_home"], home))
+        return self.say(user, "expense")
+
+    def reaction_facts(self, conn, user: dict, batch: list[dict], rows: list[dict],
+                       today: date, reached: Optional[int]) -> str:
+        """Everything the persona may mention, computed here so the model never does maths."""
+        uid, home = user["telegram_id"], user["home_currency"]
+        now = self.clock().astimezone(ZoneInfo(user["timezone"]))
+        lines = [f"Now: {now.strftime('%A %d %b, %H:%M')} (their local time).", "", "They just logged:"]
+        since = today - timedelta(days=365)
+        batch_id = batch[0]["batch_id"] if batch else None
+        for r in batch:
+            amount = fmt(abs(r["amount_minor"]), r["currency"])
+            if r["currency"] != home and r["amount_home"] is not None:
+                amount += f" (about {fmt(abs(r['amount_home']), home)})"
+            when = "" if r["occurred_on"] == today else f", dated {r['occurred_on'].strftime('%a %d %b')}"
+            kind = "Income" if r["type"] == "income" else "Expense"
+            lines.append(f"- {kind}: \"{r['description']}\", {amount}, category {r['category_name'] or 'none'}, "
+                         f"wallet {r['wallet_name']}{when}")
+            if r["type"] != "expense":
+                continue
+            st = db.price_stats(conn, uid, r["description"] or "", r["category_id"], since, batch_id)
+            item, cat = st["item"], st["category"]
+            if item["n"]:
+                lines.append(f"  Their usual price for this: {fmt(int(round(item['median'])), home)} "
+                             f"(logged {item['n']} times in the past year, range {fmt(int(item['low']), home)}"
+                             f" to {fmt(int(item['high']), home)}).")
             else:
-                situation, facts = "expense", {}
-        alerts = self.budget_alerts(conn, user, rows, today)
-        if not alerts:
-            said = self.say(user, situation, **facts)
-            if said:
-                lines.append(f"<i>{escape(said, quote=False)}</i>")
-        lines += alerts
-        return "\n".join(lines) or None
+                lines.append("  First time they've logged this exact item in the past year.")
+            if cat["n"] >= 3:
+                lines.append(f"  Their typical {r['category_name']} entry: {fmt(int(round(cat['median'])), home)}.")
+
+        earlier = [e for e in db.entries_on(conn, uid, today) if e["id"] not in {r["id"] for r in batch}
+                   and e["type"] == "expense"]
+        if earlier:
+            lines += ["", "Earlier today: " + "; ".join(
+                f"{e['description']} {fmt(-e['amount_minor'], e['currency'])}" for e in earlier[-8:])]
+        spent, _ = db.spent_on_home(conn, uid, today)
+        lines.append(f"Total spent today: {fmt(spent, home)}.")
+
+        budget = user.get("everyday_budget_minor")
+        state = db.mochi_state(conn, uid) if budget else None
+        if state:
+            bowl = mochi.bowl(budget, today)
+            used = db.spent_for_mochi(conn, uid, today)
+            left = bowl - used
+            lines.append(f"Mochi's daily bowl (everyday allowance): {fmt(bowl, home)}; "
+                         + (f"{fmt(left, home)} left today." if left >= 0 else f"over by {fmt(-left, home)} today.")
+                         + f" Mochi's weight {state['weight']}/100" + (" (she's away at grandma's)." if state["away"] else "."))
+            lines.append("Rent, bills, subscriptions and study don't count against the bowl.")
+        for alert in self.budget_alerts_plain(conn, user, rows, today):
+            lines.append(alert)
+        if reached:
+            lines.append(f"This entry gave them a {reached}-day logging streak. Celebrate it.")
+        return "\n".join(lines)
+
+    def budget_alerts_plain(self, conn, user: dict, rows: list[dict], today: date) -> list[str]:
+        return [re.sub(r"<[^>]+>", "", a).replace("&amp;", "&") for a in self.budget_alerts(conn, user, rows, today)]
+
+    def chat_back(self, conn, user: dict, chat_id: int, text: str) -> None:
+        """The user answered the persona (e.g. "it was a birthday dinner")."""
+        uid = user["telegram_id"]
+        if not self.llm_ok(conn, uid):
+            self.tg.send_message(chat_id, "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
+            return
+        facts = (f"Earlier you texted them: \"{user['last_reaction']}\"\n"
+                 f"They replied: \"{text}\"\n\n"
+                 "Reply in character in 1-2 short sentences. If they explained the spending, take it in your stride "
+                 "(tease only as much as the roast level allows). If it looks like they tried to log something but "
+                 "forgot the amount, ask for the amount. Don't invent numbers.")
+        reply, call = persona_llm.react(self.llm, self.s.persona_model, self.persona_system(user), facts)
+        db.log_llm_call(conn, uid, "persona", call, cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
+        if reply:
+            self.send_reaction(conn, user, chat_id, reply)
+        else:
+            self.tg.send_message(chat_id, "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
 
     def budget_alerts(self, conn, user: dict, rows: list[dict], today: date) -> list[str]:
         uid, home = user["telegram_id"], user["home_currency"]
@@ -447,11 +562,8 @@ class Bot:
                 continue
             name = b["name"] or "Total"
             p = bud.pct(after, b["limit_minor"])
-            said = self.say(user, f"budget_{kind}", category=name, pct=p)
             icon = "🚨" if kind == "over" else "⚠️"
             out.append(f"{icon} <b>{escape(name)}</b> budget: {fmt(after, home)} / {fmt(b['limit_minor'], home)} ({p}%)")
-            if said:
-                out.append(f"<i>{escape(said, quote=False)}</i>")
         return out
 
     def similar_examples(self, conn, uid: int, text: str, k: int = 8) -> list[tuple[str, str]]:

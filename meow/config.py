@@ -31,6 +31,8 @@ class Settings:
     cron_secret: str = field(default_factory=lambda: os.getenv("CRON_SECRET", ""))
     # A single expense at or above this (home currency) gets the "big spend" comment.
     big_expense: float = field(default_factory=lambda: float(os.getenv("BIG_EXPENSE", "50")))
+    # The persona's reactions. Haiku is quick and cheap; set PERSONA_MODEL to try a bigger model.
+    persona_model: str = field(default_factory=lambda: os.getenv("PERSONA_MODEL", "claude-haiku-4-5"))
     llm_daily_call_cap: int = field(default_factory=lambda: int(os.getenv("LLM_DAILY_CALL_CAP", "300")))
     # US$ per million tokens, used to estimate the cost of each call.
     llm_input_price: float = field(default_factory=lambda: float(os.getenv("LLM_INPUT_PRICE_PER_MTOK", "1.0")))
