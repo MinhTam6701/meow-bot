@@ -87,7 +87,7 @@ def test_recurring_rent(env):
     at(env, 2026, 11, 1, 0, 15)
     assert env.bot.run_tick(env.conn)["recurring"] == 1
     card = env.tg.sent[-1]
-    assert "S$800.00" in card.text and "Housing" in card.text and "recurring" in card.text
+    assert "S$800.00" in card.text and "Housing" in card.text and "Logged automatically (bill)" in card.text
     assert env.bot.run_tick(env.conn)["recurring"] == 0  # not twice
     assert one(env, "select next_run from recurring_rules")["next_run"] == date(2026, 12, 1)
     # a recurring entry doesn't count as "logged today" for the check-in

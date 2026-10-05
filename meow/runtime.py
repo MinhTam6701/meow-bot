@@ -48,4 +48,6 @@ def run_tick() -> dict:
     """Scheduled work: exchange rates and end-of-day reminders."""
     bot = get_bot()
     with db.connect(bot.s.database_url) as conn:
-        return bot.run_tick(conn)
+        stats = bot.run_tick(conn)
+        conn.commit()  # belt and braces: never leave work in an open transaction
+        return stats

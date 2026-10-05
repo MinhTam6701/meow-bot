@@ -822,3 +822,14 @@ def entries_between(conn, user_id: int, start: date, end: date, type_: str) -> l
            where t.user_id = %s and t.type = %s and t.occurred_on between %s and %s
            order by t.occurred_on, t.id""",
         (user_id, type_, start, end)).fetchall()
+
+
+def set_recurring_kind(conn, user_id: int, rule_id: int, kind: str) -> int:
+    return conn.execute("update recurring_rules set kind = %s where id = %s and user_id = %s and active",
+                        (kind, rule_id, user_id)).rowcount
+
+
+def update_recurring(conn, rule_id: int, **fields) -> None:
+    assert set(fields) <= {"reminded_for", "checked_on", "active"}, fields
+    sets = ", ".join(f"{k} = %s" for k in fields)
+    conn.execute(f"update recurring_rules set {sets} where id = %s", (*fields.values(), rule_id))

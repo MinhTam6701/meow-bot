@@ -159,12 +159,14 @@ def recap(conn, user: dict, today: date) -> tuple[str, list[str]]:
         lines += ["", "<b>Patterns</b>"] + [i.text for i in found[:3]]
         facts += [_plain(i.text) for i in found[:3]]
 
-    soon = [s for s in db.subscriptions(conn, uid) if today < s["next_due"] <= today + timedelta(days=7)]
+    soon = [(s["name"], s["amount_minor"], s["currency"], s["next_due"]) for s in db.subscriptions(conn, uid)]
+    soon += [(r["description"], r["amount_minor"], r["currency"], r["next_run"]) for r in db.recurring(conn, uid)
+             if r["kind"] == "subscription"]
+    soon = sorted((x for x in soon if today < x[3] <= today + timedelta(days=7)), key=lambda x: x[3])
     if soon:
-        lines += ["", "<b>Renewing this week</b>"]
-        lines += [f"🔁 {escape(s['name'])} {fmt(s['amount_minor'], s['currency'])} on {s['next_due'].strftime('%a %d %b')}"
-                  for s in soon]
-        facts.append("Renewing soon: " + ", ".join(s["name"] for s in soon) + ".")
+        lines += ["", "<b>Subscriptions renewing this week</b>"]
+        lines += [f"🔁 {escape(n)} {fmt(a, c)} on {d.strftime('%a %d %b')}" for n, a, c, d in soon]
+        facts.append("Renewing soon: " + ", ".join(n for n, *_ in soon) + ".")
     return "\n".join(lines), facts
 
 

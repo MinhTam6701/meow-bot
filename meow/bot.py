@@ -1107,20 +1107,35 @@ class Bot(PhotoFlow, SubscriptionFlow):
     def cmd_recurring(self, conn, user, chat_id, args, **_):
         uid, today = user["telegram_id"], self.today_for(user)
         usage = ("Add one: <code>/recurring add rent 800 on 1</code> (logs on the 1st of every month)\n"
-                 "Stop one: <code>/recurring stop 2</code>")
+                 "Stop one: <code>/recurring stop 2</code>\n"
+                 "It's a subscription, not a bill: <code>/recurring sub 2</code> (back: <code>/recurring bill 2</code>)")
         parts = args.split()
         if not parts:
-            rules = db.recurring(conn, uid)
+            all_rules = db.recurring(conn, uid)
+            rules = [r for r in all_rules if r["kind"] == "bill"]
+            subs_count = len(all_rules) - len(rules)
+            more = (f"\n🔁 {subs_count} subscription{'s' if subs_count > 1 else ''} also log themselves: /subscriptions"
+                    if subs_count else "")
             if not rules:
-                self.tg.send_message(chat_id, f"🔁 <b>Recurring</b>\n\nNothing yet.\n{usage}")
+                self.tg.send_message(chat_id, f"🧾 <b>Bills</b>\n\nNothing yet.{more}\n\n{usage}")
                 return
-            lines = ["🔁 <b>Recurring</b>", ""]
+            lines = ["🧾 <b>Bills</b> (log themselves)", ""]
             for r in rules:
                 sign = "+" if r["type"] == "income" else ""
                 lines.append(f"{r['id']}. {r['emoji'] or '•'} {escape(r['description'])} — {sign}"
                              f"{fmt(r['amount_minor'], r['currency'])} · {escape(r['wallet_name'])} · "
                              f"day {r['day_of_month']} · next {r['next_run'].strftime('%d %b')}")
-            self.tg.send_message(chat_id, "\n".join(lines + ["", usage]))
+            self.tg.send_message(chat_id, "\n".join(lines + ([more] if more else []) + ["", usage]))
+            return
+        if parts[0].lower() in ("sub", "subscription", "bill") and len(parts) == 2 and parts[1].isdigit():
+            kind = "bill" if parts[0].lower() == "bill" else "subscription"
+            if not db.set_recurring_kind(conn, uid, int(parts[1]), kind):
+                self.tg.send_message(chat_id, "I couldn't find that one. See /recurring.")
+            elif kind == "subscription":
+                self.tg.send_message(chat_id, "🔁 Moved to /subscriptions. It still logs itself, and I'll remind you "
+                                              "before it renews.")
+            else:
+                self.tg.send_message(chat_id, "🧾 Moved to your bills (/recurring).")
             return
         if parts[0].lower() in ("stop", "remove", "delete") and len(parts) == 2 and parts[1].isdigit():
             n = db.stop_recurring(conn, uid, int(parts[1]))
@@ -1164,7 +1179,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
                                               parser="command", source="recurring")
             db.set_recurring_link(conn, batch_id, r["id"])
             db.advance_recurring(conn, r["id"], next_monthly(run_day, r["day_of_month"], include_today=False))
-            note = "<i>🔁 Logged automatically (recurring). Undo if it didn't happen this month.</i>"
+            what = "subscription" if r.get("kind") == "subscription" else "bill"
+            note = f"<i>🔁 Logged automatically ({what}). Undo if it didn't happen this month.</i>"
             batch = db.get_batch(conn, batch_id)
             for b in batch:
                 b["card_note"] = note
@@ -1400,6 +1416,9 @@ class Bot(PhotoFlow, SubscriptionFlow):
                     if action == "setcat":
                         note = self.learn(conn, uid, tx, int(target)) or note
 
+            elif action == "subr":
+                note = self.on_auto_subscription_button(conn, uid, rest, chat_id, message_id)
+
             elif action == "sub":
                 note = self.on_subscription_button(conn, uid, rest, chat_id, message_id)
 
@@ -1512,7 +1531,11 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 stats["fx"] = fx.ensure_rates(conn, home, now.date(), self.fx_fetch) or stats["fx"]
             stats["backfilled"] = fx.backfill(conn)
         stats["recurring"] = 0
-        for user in conn.execute("select * from users order by telegram_id").fetchall():
+        # Inside a transaction block: a bare query here would open a transaction that is never committed,
+        # turning every block below into a savepoint that is thrown away when the connection closes.
+        with conn.transaction():
+            users = conn.execute("select * from users order by telegram_id").fetchall()
+        for user in users:
             today = now.astimezone(ZoneInfo(user["timezone"])).date()
             try:
                 with conn.transaction():

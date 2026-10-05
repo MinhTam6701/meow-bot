@@ -59,14 +59,14 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | `/balance`, `/setbalance DBS 2340.50` | Wallet balances; correct one (the gap is recorded as an adjustment) |
 | `/wallet` | List wallets · `add GrabPay SGD ewallet` · `default Cash` · `check DBS VPBank VCB` (which wallets the monthly check covers) |
 | `/budget` | `Food 400`, `total 1600`, `everyday 600` (Mochi's allowance), `Food off` |
-| `/recurring` | Bills that log themselves: `add rent 800 on 1`, `stop 2` |
+| `/recurring` | Bills you need, logged automatically: `add rent 800 on 1`, `stop 2`; `sub 3` moves one to subscriptions, `bill 3` back |
 | `/rules` | Categories learned from your corrections; `forget grab` |
 | `/persona`, `/roast`, `/language` | Sassy Cat, Asian Mom, Zen Monk or Plain; roast 0–3; EN, VI or mix |
 | `/remind 21:30` | Evening check-in time (only sent if nothing was logged) |
 | `/mochi`, `/streak` | How Mochi is doing; your logging streak |
 | `/report`, `/report 2026-09` | Monthly report |
 | `/check` | Balance check now |
-| `/subscriptions` | Tracked subscriptions and monthly total · `scan` · `add Netflix 17.98 monthly` · `stop 2` |
+| `/subscriptions` | Nice-to-haves (iQIYI, Claude…) and their monthly total, incl. ones that log themselves · `scan` · `add Netflix 17.98 monthly` · `stop 2` |
 | `/recap` | This week so far, with patterns (also sent Sundays at 20:00) |
 | `/myname Trinh Minh Tam` | Your name as banks print it (spots transfers to yourself in screenshots) |
 | `/undo`, `/settings`, `/help` | |
@@ -104,6 +104,11 @@ These **ask first** with buttons instead:
 | Big amount | Over `PHOTO_CONFIRM_ABOVE` (S$500) | ✅ Log it · ✏️ Category · 🚫 Don't log |
 
 ### Subscriptions
+**Bills vs subscriptions.** Bills are what you need to keep life running (rent, phone, bank fees): `/recurring`.
+Subscriptions are nice-to-haves you could live without (iQIYI, Claude): `/subscriptions`. Either kind can log
+itself every month; only subscriptions get renewal reminders and the “still using it?” check, and stopping one
+there also stops it logging. Move one with `/recurring sub 3` / `/recurring bill 3`.
+
 Every day from 10:00 the bot looks for **the same thing at a similar price (±5%) at a regular interval,
 at least twice**: weekly (3 times), monthly, quarterly or yearly, with the latest charge still recent.
 Month words and numbers are ignored, so “Tiền điện thoại tháng 9” and “… tháng 10” match. Food, groceries and
@@ -159,7 +164,7 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/config.py`, `meow/runtime.py` | Settings from environment variables; wiring for Vercel |
 | `meow/subscriptions.py`, `meow/subs_flow.py` | Spotting subscriptions; tracking, reminders, buttons, `/subscriptions` |
 | `meow/insights.py`, `meow/ask.py` | Patterns and the weekly recap; answering questions |
-| `supabase/migrations/` | Database schema, applied in order (0001 to 0009 are on your project) |
+| `supabase/migrations/` | Database schema, applied in order (0001 to 0010 are on your project) |
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
 

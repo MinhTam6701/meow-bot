@@ -46,6 +46,11 @@ def test_not_subscriptions():
     irregular = [ch("2026-04-29", 18375, "Bảo hiểm", "VND"), ch("2026-08-03", 18375, "Bảo hiểm", "VND"),
                  ch("2026-09-28", 18375, "Bảo hiểm", "VND")]
     assert not subs.detect(irregular, TODAY)
+    # The real case: monthly-ish insurance with gaps; skipping five charges to pair Sep 2025 with Oct 2026
+    # must not make it "yearly".
+    insurance = [ch(d, 18375, f"Bảo hiểm tín dụng tháng {i}", "VND") for i, d in enumerate(
+        ("2025-09-28", "2025-11-07", "2025-12-07", "2026-01-05", "2026-04-29", "2026-05-24", "2026-10-03"))]
+    assert not subs.detect(insurance, date(2026, 10, 5))
     weekly_twice = [ch("2026-09-15", 2500, "Yoga"), ch("2026-09-22", 2500, "Yoga")]
     assert not subs.detect(weekly_twice, TODAY)  # weekly needs three
     food = [ch(f"2026-0{m}-05", 450, "Kopi", cat="Food & Drinks") for m in (7, 8, 9)]
@@ -121,7 +126,7 @@ def test_waits_until_10am_and_no_means_never_again(env):
     env.press(next(b for b in buttons(ask.markup) if b.endswith(":no")), ask.id)
     env.clock.now += timedelta(days=1)
     assert not [m for m in tick(env) if "a subscription?" in m.text]
-    assert "None tracked yet" in env.say("/subscriptions").text
+    assert "None yet." in env.say("/subscriptions").text
 
 
 def test_bills_that_already_log_themselves_are_not_suggested(env):
@@ -130,7 +135,7 @@ def test_bills_that_already_log_themselves_are_not_suggested(env):
     for d in ("2026-07-05", "2026-08-05", "2026-09-05"):
         add(env, "Tiền điện thoại tháng 9", 790, d, cat="Phone")
     assert not [m for m in tick(env) if "a subscription?" in m.text]
-    assert "Bills that log themselves" in env.say("/subscriptions").text
+    assert "Bills you need (rent, phone…): /recurring" in env.say("/subscriptions").text
 
 
 def test_a_recurring_bill_only_hides_the_same_thing(env):
@@ -220,7 +225,7 @@ def test_still_using_it_every_three_months(env):
     assert "S$120.00 a month is about S$1,440.00 a year" in check.text
     env.press(next(b for b in buttons(check.markup) if b.endswith(":cancel")), check.id)
     assert "Marked <b>Gym</b> as cancelled" in env.tg.edits[-1].text
-    assert "None tracked yet" in env.say("/subscriptions").text
+    assert "None yet." in env.say("/subscriptions").text
 
 
 def test_add_and_stop_by_hand(env):
@@ -238,3 +243,79 @@ def test_buttons_belong_to_their_owner(env):
     env.bot.s.allowed_user_ids.add(2002)
     env.press(next(b for b in buttons(ask.markup) if b.endswith(":yes")), ask.id, user=2002)
     assert env.conn.execute("select status from subscriptions").fetchone()["status"] == "suggested"
+
+
+def test_scheduled_work_is_really_saved(env):
+    """Regression: the tick left a transaction open, so everything it wrote was rolled back on close.
+    Checked from a second connection, which only sees committed data."""
+    import psycopg
+
+    from tests.support import DB_URL
+    env.say("/start")
+    netflix(env)
+    env.conn.commit()  # the test's own setup inserts must not hold a transaction open
+    ask = next(m for m in tick(env) if "a subscription?" in m.text)
+    with psycopg.connect(DB_URL) as other:
+        assert other.execute("select count(*) from subscriptions").fetchone()[0] == 1
+        assert other.execute("select count(*) from job_runs").fetchone()[0] == 1
+    env.press(next(b for b in buttons(ask.markup) if b.endswith(":yes")), ask.id)
+    assert "Tracking <b>Netflix</b>" in env.tg.edits[-1].text
+
+
+# --- bills vs subscriptions -----------------------------------------------------------
+
+def rule_id(env, desc):
+    return env.conn.execute("select id from recurring_rules where description = %s", (desc,)).fetchone()["id"]
+
+
+def test_bills_and_subscriptions_are_listed_apart(env):
+    env.say("/start")
+    env.say("/recurring add rent 800 on 1")
+    env.say("/recurring add iqiyi 65556 on 25")
+    iq = rule_id(env, "iqiyi")
+    assert "iqiyi" in env.say("/recurring").text
+    assert "Moved to /subscriptions" in env.say(f"/recurring sub {iq}").text
+    bills = env.say("/recurring").text
+    assert "rent" in bills and "iqiyi" not in bills and "1 subscription also log" in bills
+    subs_list = env.say("/subscriptions").text
+    assert "1. <b>iqiyi</b> 65,556₫ / month · next Sun 25 Oct" in subs_list and "logs itself" in subs_list
+    assert "≈ <b>S$3.28</b> a month" in subs_list           # 65,556₫ at 20,000 per SGD
+    assert "<b>rent</b>" not in subs_list
+    assert "Moved to your bills" in env.say(f"/recurring bill {iq}").text
+    assert "iqiyi" in env.say("/recurring").text
+
+
+def test_subscription_that_logs_itself_gets_reminders_and_can_be_stopped(env):
+    env.say("/start")
+    env.say("/recurring add iqiyi 65556 on 25")
+    env.say(f"/recurring sub {rule_id(env, 'iqiyi')}")
+    env.conn.commit()
+    env.clock.now = datetime(2026, 10, 23, 3, 0, tzinfo=timezone.utc)  # Fri 23 Oct, 11:00
+    note = next(m for m in tick(env) if "renews" in m.text)
+    assert "<b>iqiyi</b> 65,556₫ renews in 2 days (Sun 25 Oct) and logs itself" in note.text
+    env.clock.now += timedelta(days=1)
+    assert not [m for m in tick(env) if "renews" in m.text]
+    assert "Stopped <b>iqiyi</b>" in env.say("/subscriptions stop 1").text
+    assert env.conn.execute("select active from recurring_rules").fetchone()["active"] is False
+    env.clock.now += timedelta(days=2)
+    tick(env)
+    assert env.conn.execute("select count(*) n from transactions where source = 'recurring'").fetchone()["n"] == 0
+
+
+def test_still_using_a_subscription_that_logs_itself(env):
+    env.say("/start")
+    env.say("/recurring add iqiyi 65556 on 25")
+    env.say(f"/recurring sub {rule_id(env, 'iqiyi')}")
+    env.conn.execute("update recurring_rules set created_at = now() - interval '100 days'")
+    check = next(m for m in tick(env) if "Still using" in m.text)
+    assert "<b>iqiyi</b>? 65,556₫ a month is about 786,672₫ a year" in check.text
+    env.press(next(b for b in buttons(check.markup) if b.endswith(":cancel")), check.id)
+    assert "won't log itself any more" in env.tg.edits[-1].text
+    assert env.conn.execute("select active from recurring_rules").fetchone()["active"] is False
+
+
+def test_bills_never_get_subscription_reminders(env):
+    env.say("/start")
+    env.say("/recurring add rent 800 on 1")
+    env.clock.now = datetime(2026, 10, 30, 3, 0, tzinfo=timezone.utc)
+    assert not [m for m in tick(env) if "renews" in m.text or "Still using" in m.text]

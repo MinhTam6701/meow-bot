@@ -116,16 +116,18 @@ def detect(charges: list[Charge], today: date) -> list[Candidate]:
         latest = items[-1]
         # Walk back from the latest charge while the amount stays within ±5% and the gaps look regular.
         chain = [latest]
+        skipped = 0  # same-price charges that didn't fit the rhythm
         for c in reversed(items[:-1]):
             if c.day == chain[-1].day or not similar(c.amount, latest.amount):
                 continue
             gaps = [(chain[i].day - chain[i + 1].day).days for i in range(len(chain) - 1)]
             gap = (chain[-1].day - c.day).days
             if classify(gaps + [gap]) is None:
-                continue  # an extra charge in between (a one-off at the same price): skip it, keep looking
+                skipped += 1  # an extra charge in between (a one-off at the same price): skip it, keep looking
+                continue
             chain.append(c)
-        if len(chain) < 2:
-            continue
+        if len(chain) < 2 or skipped >= len(chain) - 1:
+            continue  # off-rhythm charges must be the exception, or it isn't regular at all
         chain.reverse()
         gaps = [(chain[i + 1].day - chain[i].day).days for i in range(len(chain) - 1)]
         interval = classify(gaps)

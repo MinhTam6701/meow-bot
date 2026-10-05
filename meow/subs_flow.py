@@ -80,7 +80,19 @@ class SubscriptionFlow:
                 notes.append(f"🔔 <b>{escape(s['name'])}</b> {fmt(s['amount_minor'], s['currency'])} renews {when} "
                              f"({s['next_due'].strftime('%a %d %b')}). Cancel before then if you don't need it.")
                 db.update_subscription(conn, s["id"], reminded_for=s["next_due"])
+        for r in self.auto_subscriptions(conn, uid):
+            days = (r["next_run"] - today).days
+            if 0 <= days <= REMIND_DAYS_BEFORE and r["reminded_for"] != r["next_run"]:
+                when = "today" if days == 0 else ("tomorrow" if days == 1 else f"in {days} days")
+                notes.append(f"🔔 <b>{escape(r['description'])}</b> {fmt(r['amount_minor'], r['currency'])} renews {when} "
+                             f"({r['next_run'].strftime('%a %d %b')}) and logs itself. Cancel before then if you "
+                             "don't need it, then <code>/subscriptions stop</code> it.")
+                db.update_recurring(conn, r["id"], reminded_for=r["next_run"])
         return notes
+
+    def auto_subscriptions(self, conn, uid: int) -> list[dict]:
+        """Subscriptions that log themselves (recurring rules marked as subscriptions)."""
+        return [r for r in db.recurring(conn, uid) if r["kind"] == "subscription"]
 
     def quarterly_check(self, conn, user: dict, today: date) -> None:
         uid = user["telegram_id"]
@@ -95,6 +107,16 @@ class SubscriptionFlow:
                                      reply_markup={"inline_keyboard": [[btn("👍 Yes, keep it", f"sub:{s['id']}:using"),
                                                                         btn("✂️ I cancelled it", f"sub:{s['id']}:cancel")]]})
                 return  # one at a time
+        for r in self.auto_subscriptions(conn, uid):
+            since = r["checked_on"] or r["created_at"].date()
+            if (today - since).days >= CHECK_EVERY_DAYS:
+                db.update_recurring(conn, r["id"], checked_on=today)
+                self.send_quietly(uid, f"🤔 Still using <b>{escape(r['description'])}</b>? "
+                                       f"{fmt(r['amount_minor'], r['currency'])} a month is about "
+                                       f"{fmt(r['amount_minor'] * 12, r['currency'])} a year.",
+                                  reply_markup={"inline_keyboard": [[btn("👍 Yes, keep it", f"subr:{r['id']}:using"),
+                                                                     btn("✂️ I cancelled it", f"subr:{r['id']}:cancel")]]})
+                return
 
     def suggest_subscriptions(self, conn, user: dict, charges: list[subs.Charge], today: date, limit: int) -> int:
         uid = user["telegram_id"]
@@ -156,6 +178,23 @@ class SubscriptionFlow:
         self.tg.edit_message_text(chat_id, message_id, text, None)
         return None
 
+    def on_auto_subscription_button(self, conn, uid: int, rest: str, chat_id: int, message_id: int) -> Optional[str]:
+        rid, _, action = rest.partition(":")
+        r = next((x for x in self.auto_subscriptions(conn, uid) if x["id"] == int(rid)), None)
+        if r is None:
+            return "That isn't available."
+        name = escape(r["description"])
+        if action == "using":
+            text = f"👍 Keeping <b>{name}</b>. I'll check again in 3 months."
+        elif action == "cancel":
+            db.update_recurring(conn, r["id"], active=False)
+            text = (f"✂️ Stopped <b>{name}</b>: it won't log itself any more. "
+                    f"{fmt(r['amount_minor'] * 12, r['currency'])} a year saved 🎉")
+        else:
+            return "Unknown button."
+        self.tg.edit_message_text(chat_id, message_id, text, None)
+        return None
+
     # ------------------------------------------------------------------ /subscriptions
     def cmd_subscriptions(self, conn, user, chat_id, args, **_):
         uid, home, today = user["telegram_id"], user["home_currency"], self.today_for(user)
@@ -173,38 +212,48 @@ class SubscriptionFlow:
             self.tg.send_message(chat_id, self.add_subscription_by_hand(conn, user, parts[1:], today) or usage)
             return
         if parts and parts[0].lower() in ("stop", "remove", "cancel") and len(parts) == 2 and parts[1].isdigit():
-            active = db.subscriptions(conn, uid)
+            items = self.subscription_items(conn, uid)
             n = int(parts[1])
-            if not 1 <= n <= len(active):
+            if not 1 <= n <= len(items):
                 self.tg.send_message(chat_id, "No subscription with that number. See /subscriptions")
                 return
-            db.update_subscription(conn, active[n - 1]["id"], status="cancelled")
-            self.tg.send_message(chat_id, f"✂️ Stopped tracking <b>{escape(active[n - 1]['name'])}</b>.")
+            kind, item = items[n - 1]
+            if kind == "rule":
+                db.update_recurring(conn, item["id"], active=False)
+                self.tg.send_message(chat_id, f"✂️ Stopped <b>{escape(item['description'])}</b>: it won't log itself any more.")
+            else:
+                db.update_subscription(conn, item["id"], status="cancelled")
+                self.tg.send_message(chat_id, f"✂️ Stopped tracking <b>{escape(item['name'])}</b>.")
             return
         if parts:
             self.tg.send_message(chat_id, usage)
             return
 
-        active = db.subscriptions(conn, uid)
-        lines = ["🔁 <b>Subscriptions</b>", ""]
+        items = self.subscription_items(conn, uid)
+        lines = ["🔁 <b>Subscriptions</b> (nice to have)", ""]
         monthly_home = 0
-        for i, s in enumerate(active, 1):
-            lines.append(f"{i}. <b>{escape(s['name'])}</b> {fmt(s['amount_minor'], s['currency'])} / "
-                         f"{subs.LABEL[s['interval']]} · next {s['next_due'].strftime('%a %d %b')}"
-                         + (f" · {escape(s['wallet_name'])}" if s["wallet_name"] else ""))
-            monthly_home += self.in_home(conn, home, subs.per_month(s["amount_minor"], s["interval"]), s["currency"], today)
-        if active:
+        for i, (kind, s) in enumerate(items, 1):
+            if kind == "rule":
+                lines.append(f"{i}. <b>{escape(s['description'])}</b> {fmt(s['amount_minor'], s['currency'])} / month · "
+                             f"next {s['next_run'].strftime('%a %d %b')} · {escape(s['wallet_name'])} · logs itself")
+                monthly_home += self.in_home(conn, home, s["amount_minor"], s["currency"], today)
+            else:
+                lines.append(f"{i}. <b>{escape(s['name'])}</b> {fmt(s['amount_minor'], s['currency'])} / "
+                             f"{subs.LABEL[s['interval']]} · next {s['next_due'].strftime('%a %d %b')}"
+                             + (f" · {escape(s['wallet_name'])}" if s["wallet_name"] else ""))
+                monthly_home += self.in_home(conn, home, subs.per_month(s["amount_minor"], s["interval"]),
+                                             s["currency"], today)
+        if items:
             lines += ["", f"≈ <b>{fmt(monthly_home, home)}</b> a month · {fmt(monthly_home * 12, home)} a year"]
         else:
-            lines.append("None tracked yet. I check every day and ask when something repeats.")
-        rules = [r for r in db.recurring(conn, uid) if r["active"]]
-        if rules:
-            lines += ["", "<b>Bills that log themselves</b> (/recurring)"]
-            lines += [f"• {escape(r['description'])} {fmt(r['amount_minor'], r['currency'])} on the {r['day_of_month']}"
-                      f"{'st' if r['day_of_month'] in (1, 21, 31) else 'nd' if r['day_of_month'] in (2, 22) else 'rd' if r['day_of_month'] in (3, 23) else 'th'}"
-                      for r in rules]
-        lines += ["", usage]
+            lines.append("None yet. I check every day and ask when something repeats.")
+        lines += ["", "Bills you need (rent, phone…): /recurring", "", usage]
         self.tg.send_message(chat_id, "\n".join(lines))
+
+    def subscription_items(self, conn, uid: int) -> list[tuple[str, dict]]:
+        """Tracked subscriptions, then the ones that log themselves; one numbering for /subscriptions stop N."""
+        return [("tracked", s) for s in db.subscriptions(conn, uid)] + \
+               [("rule", r) for r in self.auto_subscriptions(conn, uid)]
 
     def add_subscription_by_hand(self, conn, user: dict, words: list[str], today: date) -> Optional[str]:
         interval = next((w.lower() for w in words if w.lower() in subs.INTERVALS), "monthly")

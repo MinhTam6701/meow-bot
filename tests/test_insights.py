@@ -162,4 +162,4 @@ def test_upcoming_renewals_in_the_recap(env):
     sunday_8pm(env)
     env.press("pers:plain", env.say("/persona").id)
     msg = env.say("/recap")
-    assert "Renewing this week" in msg.text and "Netflix S$17.98 on Thu 01 Oct" in msg.text
+    assert "Subscriptions renewing this week" in msg.text and "Netflix S$17.98 on Thu 01 Oct" in msg.text
