@@ -118,6 +118,15 @@ entries saved while rates were unavailable, and sends due check-ins. Every step 
 | Monthly report | 1st at 09:00: totals vs last month, categories with trends, top 3, budget scorecard, fun facts, one tip. `/report` or `/report 2026-09` any time. |
 | Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (type the real number, the gap becomes an adjustment) / skip. `/check` any time. Only wallets with `check_monthly`. |
 
+## M4: photos
+
+| Feature | How it works |
+|---|---|
+| Photo logging | Send a receipt, a bank-app screenshot, a card notification or a Shopee order. Claude Haiku reads the amount actually paid, the date, the bank and who was paid. Clear ones are logged straight away (📸 on the card). |
+| Checked first | Buttons instead of logging when: the same amount is already logged within a day (a week if the photo has no date); money went to a person (Spending / My own account / Don't log); it went to your own name (`/myname`), which is recorded as a move between wallets; or it's over `PHOTO_CONFIRM_ABOVE` (default S$500). |
+| Privacy | Photos are not stored. Account, card and phone numbers and reference codes are removed before anything is saved or logged. |
+| Try it | `python scripts/try_photo.py private/your_screenshot.jpg` shows what Claude reads, without saving. |
+
 ## Importing Money Manager history
 
 ```bash

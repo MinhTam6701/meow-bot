@@ -16,6 +16,7 @@ class TelegramError(RuntimeError):
 class TelegramAPI:
     def __init__(self, token: str, timeout: float = 15.0):
         self.base = f"https://api.telegram.org/bot{token}"
+        self.file_base = f"https://api.telegram.org/file/bot{token}"
         self.http = httpx.Client(timeout=timeout)
 
     def call(self, method: str, **params: Any) -> Any:
@@ -48,6 +49,15 @@ class TelegramAPI:
 
     def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None):
         return self.call("answerCallbackQuery", callback_query_id=callback_query_id, text=text)
+
+    def download_file(self, file_id: str, max_bytes: int = 20 * 1024 * 1024) -> bytes:
+        """Fetch a photo or voice note the user sent (Telegram serves files up to 20 MB to bots)."""
+        info = self.call("getFile", file_id=file_id)
+        resp = self.http.get(f"{self.file_base}/{info['file_path']}")
+        resp.raise_for_status()
+        if len(resp.content) > max_bytes:
+            raise TelegramError("file too large")
+        return resp.content
 
     def send_chat_action(self, chat_id: int, action: str = "typing"):
         try:

@@ -33,6 +33,10 @@ class Settings:
     big_expense: float = field(default_factory=lambda: float(os.getenv("BIG_EXPENSE", "50")))
     # The persona's reactions. Haiku is quick and cheap; set PERSONA_MODEL to try a bigger model.
     persona_model: str = field(default_factory=lambda: os.getenv("PERSONA_MODEL", "claude-haiku-4-5"))
+    # Reading photos and screenshots.
+    vision_model: str = field(default_factory=lambda: os.getenv("VISION_MODEL", "claude-haiku-4-5"))
+    # A photo entry at or above this (home currency) is checked with you before logging.
+    photo_confirm_above: float = field(default_factory=lambda: float(os.getenv("PHOTO_CONFIRM_ABOVE", "500")))
     llm_daily_call_cap: int = field(default_factory=lambda: int(os.getenv("LLM_DAILY_CALL_CAP", "300")))
     # US$ per million tokens, used to estimate the cost of each call.
     llm_input_price: float = field(default_factory=lambda: float(os.getenv("LLM_INPUT_PRICE_PER_MTOK", "1.0")))

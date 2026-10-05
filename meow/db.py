@@ -289,7 +289,7 @@ def llm_calls_since(conn, user_id: int, since) -> int:
 # --- M2: settings ----------------------------------------------------------------
 
 USER_FIELDS = {"reminder_time", "reminders_on", "reminders_paused_until", "last_reminded_on",
-               "snooze_until", "persona", "roast_level", "language"}
+               "snooze_until", "persona", "roast_level", "language", "full_name"}
 
 
 def update_user(conn, telegram_id: int, **fields) -> None:
@@ -724,3 +724,40 @@ def price_stats(conn, user_id: int, description: str, category_id: Optional[int]
 def set_last_reaction(conn, user_id: int, text: Optional[str], at=None) -> None:
     conn.execute("update users set last_reaction = %s, last_reaction_at = %s where telegram_id = %s",
                  (text, at if text else None, user_id))
+
+
+# --- M4: photos and other entries waiting for a tap ------------------------------
+
+def find_duplicate(conn, user_id: int, currency: str, amount_minor: int, type_: str, day: date,
+                   window_days: int = 1) -> Optional[dict]:
+    """A live entry with the same amount and currency within `window_days` of `day`."""
+    return conn.execute(
+        """select t.description, t.amount_minor, t.currency, t.occurred_on, w.name as wallet_name
+           from live_transactions t join wallets w on w.id = t.wallet_id
+           where t.user_id = %s and t.currency = %s and t.amount_minor = %s and t.type = %s
+             and t.occurred_on between %s and %s
+           order by abs(t.occurred_on - %s::date), t.id desc limit 1""",
+        (user_id, currency, amount_minor, type_, day - timedelta(days=window_days),
+         day + timedelta(days=window_days), day)).fetchone()
+
+
+def add_pending(conn, user_id: int, source: str, entry: dict, counterparty: Optional[str], note: Optional[str],
+                flags: list[str], dup_of: Optional[str], date_guessed: bool) -> int:
+    return conn.execute(
+        """insert into pending_items (user_id, source, entry, counterparty, note, flags, dup_of, date_guessed)
+           values (%s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+        (user_id, source, Jsonb(entry), counterparty, note, flags, dup_of, date_guessed)).fetchone()["id"]
+
+
+def get_pending(conn, item_id: int) -> Optional[dict]:
+    return conn.execute("select * from pending_items where id = %s", (item_id,)).fetchone()
+
+
+PENDING_FIELDS = {"entry", "flags", "status", "message_id"}
+
+
+def update_pending(conn, item_id: int, **fields) -> None:
+    assert set(fields) <= PENDING_FIELDS, fields
+    sets = ", ".join(f"{k} = %s" for k in fields)
+    vals = [Jsonb(v) if k == "entry" else v for k, v in fields.items()]
+    conn.execute(f"update pending_items set {sets} where id = %s", (*vals, item_id))

@@ -26,6 +26,7 @@ from .parser import has_amount, parse_message
 from .parser_llm import cost_usd
 from .parser_rules import parse_with_rules
 from .text import phrase_keys, phrase_words
+from .photo_flow import PhotoFlow, image_of
 from .personas import LANGUAGES, PERSONAS, ROAST_LABELS, line as persona_line
 from .telegram import TelegramAPI
 from .transfers import TransferRequest, parse_transfer
@@ -92,7 +93,7 @@ TOTAL_WORDS = {"total", "all", "month", "overall", "tong"}
 WALLET_TYPES = {"cash", "bank", "ewallet", "credit"}
 
 
-class Bot:
+class Bot(PhotoFlow):
     def __init__(self, settings: Settings, tg: TelegramAPI, llm_client: Any = None,
                  clock: Optional[Callable[[], datetime]] = None,
                  fx_fetch: Optional[fx.Fetcher] = None, rng: Optional[random.Random] = None):
@@ -141,9 +142,15 @@ class Bot:
                                        self.s.home_currency, self.s.default_timezone)
         if created:
             user = db.get_user(conn, sender["id"])  # pick up column defaults
+        image = image_of(msg)
+        if image:
+            if user.get("awaiting"):
+                db.set_awaiting(conn, user["telegram_id"], None)
+            self.on_photo(conn, user, chat["id"], msg, image)
+            return
         text = (msg.get("text") or "").strip()
         if not text:
-            self.tg.send_message(chat["id"], "I only read text messages for now. Photos and voice notes are coming later 🐾")
+            self.tg.send_message(chat["id"], "I can read text and photos of receipts or payment screenshots 🐾")
             return
 
         if user.get("awaiting") and not text.startswith("/"):
@@ -238,7 +245,7 @@ class Bot:
                      description="Day total", date=today)
 
     def save_entries(self, conn, user: dict, chat_id: int, ctx: ParseContext, entries: list[Entry],
-                     raw: str, parser: str, source: str = "text") -> None:
+                     raw: str, parser: str, source: str = "text", extra_note: Optional[str] = None) -> None:
         uid, today = user["telegram_id"], ctx.today
         rows, question = self.resolve(conn, user, ctx, entries)
         if question:
@@ -248,6 +255,8 @@ class Bot:
         streak_before = self.streak(conn, uid, today).current
         batch_id = db.insert_transactions(conn, uid, rows, raw_message=raw, parser=parser, source=source)
         note = self.compose_note(conn, user, rows, today)
+        if extra_note:
+            note = f"<i>{escape(extra_note, quote=False)}</i>" + (f"\n{note}" if note else "")
         reached = streaks.milestone_reached(streak_before, self.streak(conn, uid, today).current)
         if reached:
             note = (note + "\n" if note else "") + f"🔥 <b>{reached}-day streak!</b> " + MILESTONE_LINES[reached]
@@ -602,8 +611,10 @@ class Bot:
         return None, f"I don't have a category called \"{escape(name)}\".\nCategories: {escape(names)}"
 
     # ------------------------------------------------------------------ transfers
-    def do_transfer(self, conn, user: dict, chat_id: int, ctx: ParseContext, t: TransferRequest, raw: str) -> None:
+    def do_transfer(self, conn, user: dict, chat_id: int, ctx: ParseContext, t: TransferRequest, raw: str,
+                    on: Optional[date] = None) -> None:
         uid, home, today = user["telegram_id"], user["home_currency"], ctx.today
+        day = on or today
         src = t.from_wallet
         dst = t.to_wallet or self.cash_wallet(conn, uid, ctx, src.currency, home)
         cur = t.currency or ("VND" if t.vnd_hint else src.currency)
@@ -616,10 +627,10 @@ class Bot:
             elif t.received:
                 in_minor = to_minor(t.received[0], dst.currency)
             else:
-                in_minor, estimated = self.fx_convert(conn, home, out_minor, src.currency, dst.currency, today), True
+                in_minor, estimated = self.fx_convert(conn, home, out_minor, src.currency, dst.currency, day), True
         elif cur == dst.currency:
             in_minor = to_minor(t.amount, cur)
-            out_minor, estimated = self.fx_convert(conn, home, in_minor, dst.currency, src.currency, today), True
+            out_minor, estimated = self.fx_convert(conn, home, in_minor, dst.currency, src.currency, day), True
         else:
             self.tg.send_message(chat_id, f"{escape(src.name)} holds {src.currency} and {escape(dst.name)} holds "
                                           f"{dst.currency}, but the amount looks like {cur}.")
@@ -635,10 +646,10 @@ class Bot:
         rows = [
             self.with_home(conn, home, {"wallet_id": src.id, "category_id": None, "type": "transfer",
                                         "amount_minor": -out_minor, "currency": src.currency,
-                                        "description": f"to {dst.name}", "occurred_on": today}),
+                                        "description": f"to {dst.name}", "occurred_on": day}),
             self.with_home(conn, home, {"wallet_id": dst.id, "category_id": None, "type": "transfer",
                                         "amount_minor": in_minor, "currency": dst.currency,
-                                        "description": f"from {src.name}", "occurred_on": today}),
+                                        "description": f"from {src.name}", "occurred_on": day}),
         ]
         batch_id = db.insert_transactions(conn, uid, rows, raw_message=raw, parser="rule", source="transfer")
         note = ("<i>Converted at today's rate. If your bank used a different rate, "
@@ -916,7 +927,22 @@ class Bot:
                                       f"Language: {LANGUAGES.get(user['language'], user['language'])} (/language)\n"
                                       f"Daily check-in: {rem} (/remind)\n"
                                       f"Home currency: {user['home_currency']}\n"
-                                      f"Timezone: {user['timezone']}")
+                                      f"Timezone: {user['timezone']}\n"
+                                      f"Your full name: {escape(user.get('full_name') or 'not set')} (/myname)")
+
+    def cmd_myname(self, conn, user, chat_id, args, **_):
+        """Your name as banks print it, so photos of transfers to yourself are spotted."""
+        name = " ".join(args.split())
+        if not name:
+            self.tg.send_message(chat_id, f"Your full name: <b>{escape(user.get('full_name') or 'not set')}</b>\n"
+                                          "I use it to spot transfers between your own accounts in screenshots.\n"
+                                          "Change it: <code>/myname Trinh Minh Tam</code>")
+            return
+        if len(name) > 80 or len(name.split()) < 2:
+            self.tg.send_message(chat_id, "Please give your full name, e.g. <code>/myname Trinh Minh Tam</code>.")
+            return
+        db.update_user(conn, user["telegram_id"], full_name=name)
+        self.tg.send_message(chat_id, f"Got it: <b>{escape(name)}</b>. Transfers to that name count as moving your own money.")
 
     def cmd_wallet(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]
@@ -1271,6 +1297,9 @@ class Bot:
                     note = "Updated"
                     if action == "setcat":
                         note = self.learn(conn, uid, tx, int(target)) or note
+
+            elif action == "pi":
+                note = self.on_pending_button(conn, uid, rest, chat_id, message_id)
 
             elif action == "rc":
                 note = self.on_recon_button(conn, uid, rest, chat_id, message_id)

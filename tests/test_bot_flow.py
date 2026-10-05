@@ -55,6 +55,10 @@ class FakeTelegram:
     def send_chat_action(self, *a, **k):
         pass
 
+    def download_file(self, file_id, max_bytes=None):
+        self.downloads = getattr(self, "downloads", []) + [file_id]
+        return b"\xff\xd8fake-jpeg"
+
 
 REACTION = "[persona]"
 

@@ -10,3 +10,10 @@ __pycache__/
 *.csv
 *.mmbackup
 private/
+
+# Screenshots and photos (may contain account numbers)
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.webp
