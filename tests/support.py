@@ -27,6 +27,16 @@ class FakeTelegram:
         self.sent.append(SimpleNamespace(chat_id=chat_id, text=text, markup=reply_markup, id=self.next_id, silent=silent))
         return {"message_id": self.next_id}
 
+    def send_photo(self, chat_id, photo, caption=None, filename="photo.jpg", silent=False):
+        """Records the picture like a message (caption as text), so tests can read it as sent[-1]."""
+        if getattr(self, "photo_fails", False):
+            raise RuntimeError("Bad Request: wrong file")
+        self.next_id += 1
+        self.photos = getattr(self, "photos", []) + [(photo if isinstance(photo, str) else f"<upload {filename}>")]
+        self.sent.append(SimpleNamespace(chat_id=chat_id, text=caption or "", markup=None, id=self.next_id,
+                                         silent=silent, photo=photo if isinstance(photo, str) else filename))
+        return {"message_id": self.next_id, "photo": [{"file_id": "small"}, {"file_id": f"tg-{filename}"}]}
+
     def pin_chat_message(self, chat_id, message_id):
         self.pinned = message_id
 

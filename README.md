@@ -82,6 +82,7 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | M2 | Personas | The persona replies to each entry in its own message (Claude). Code gives it the facts: your usual price for that item, today's spending, your allowance, budget alerts. It questions odd prices, and you can answer it within 30 minutes. If Claude is down, a pre-written line is used. Plain = no replies |
 | M2.1 | Your history | Money Manager import (1 year), English categories incl. Groceries, recurring bills |
 | M3 | Mochi 🐱 | Daily bowl = everyday budget ÷ days in month. Scored after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2. At 0 she goes to grandma's; 3 good days bring her back. Rent, bills, phone, subscriptions, study, recurring entries and `#planned` don't count |
+| M5 | Mochi's pictures | `/mochi` and the nightly verdict come with her picture: skinny below 40, neutral 40–69, fat from 70 (none while she's at grandma's). Art in `assets/mochi/`; each picture is uploaded to Telegram once and reused (`media` table). Replace a file to change the art |
 | M3 | Streak 🔥 | A day counts if you log or mark no-spend. One freeze a week (after 5 of 7 logged days). Milestones 3, 7, 14, 30, 100 with 🔔🧣👑 |
 | M3 | Monthly report | 1st at 09:00: totals vs last month, categories with trends, top 3, budget scorecard, fun facts, one tip |
 | M3 | Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (gap becomes an adjustment) / skip |
@@ -164,7 +165,7 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/config.py`, `meow/runtime.py` | Settings from environment variables; wiring for Vercel |
 | `meow/subscriptions.py`, `meow/subs_flow.py` | Spotting subscriptions; tracking, reminders, buttons, `/subscriptions` |
 | `meow/insights.py`, `meow/ask.py` | Patterns and the weekly recap; answering questions |
-| `supabase/migrations/` | Database schema, applied in order (0001 to 0010 are on your project) |
+| `supabase/migrations/` | Database schema, applied in order (0001 to 0011 are on your project) |
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
 

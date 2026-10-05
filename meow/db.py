@@ -833,3 +833,13 @@ def update_recurring(conn, rule_id: int, **fields) -> None:
     assert set(fields) <= {"reminded_for", "checked_on", "active"}, fields
     sets = ", ".join(f"{k} = %s" for k in fields)
     conn.execute(f"update recurring_rules set {sets} where id = %s", (*fields.values(), rule_id))
+
+
+def media_file_id(conn, key: str) -> Optional[str]:
+    row = conn.execute("select file_id from media where key = %s", (key,)).fetchone()
+    return row["file_id"] if row else None
+
+
+def save_media(conn, key: str, file_id: str) -> None:
+    conn.execute("insert into media (key, file_id) values (%s, %s) on conflict (key) do update set file_id = excluded.file_id",
+                 (key, file_id))

@@ -7,6 +7,8 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
+from typing import Optional
 
 from .money import fmt
 
@@ -73,6 +75,16 @@ def score(weight: int, away: bool, result: str, recent_results: list[str]) -> Da
     if new == 0:
         return DayScore(result, new - weight, 0, True, left=True)
     return DayScore(result, new - weight, new, False)
+
+
+ART_DIR = Path(__file__).resolve().parent.parent / "assets" / "mochi"
+
+
+def art(weight: int, away: bool) -> Optional[str]:
+    """Which picture of Mochi: skinny below 40, neutral 40-69, fat from 70. None while she's at grandma's."""
+    if away:
+        return None
+    return "fat" if weight >= 70 else "neutral" if weight >= 40 else "skinny"
 
 
 def stage(weight: int) -> str:

@@ -36,6 +36,20 @@ class TelegramAPI:
                          reply_markup=reply_markup, link_preview_options={"is_disabled": True},
                          disable_notification=silent or None)
 
+    def send_photo(self, chat_id: int, photo, caption: Optional[str] = None, filename: str = "photo.jpg",
+                   silent: bool = False) -> dict:
+        """`photo` is a Telegram file_id (str) or the image itself (bytes, uploaded once)."""
+        params = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML" if caption else None,
+                  "disable_notification": silent or None}
+        if isinstance(photo, str):
+            return self.call("sendPhoto", photo=photo, **params)
+        data = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in params.items() if v is not None}
+        resp = self.http.post(f"{self.base}/sendPhoto", data=data, files={"photo": (filename, photo, "image/jpeg")})
+        body = resp.json()
+        if not body.get("ok"):
+            raise TelegramError(f"sendPhoto: {body.get('description', '')}")
+        return body["result"]
+
     def pin_chat_message(self, chat_id: int, message_id: int):
         return self.call("pinChatMessage", chat_id=chat_id, message_id=message_id, disable_notification=True)
 

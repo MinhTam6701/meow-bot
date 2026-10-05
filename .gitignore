@@ -17,3 +17,6 @@ private/
 *.png
 *.heic
 *.webp
+
+# ...except the bot's own art
+!assets/mochi/*.jpg

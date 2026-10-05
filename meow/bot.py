@@ -5,6 +5,7 @@ The same Bot is used by the Vercel webhook, the scheduler endpoint and the local
 from __future__ import annotations
 
 import calendar
+import hashlib
 import logging
 import random
 import re
@@ -457,8 +458,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
             day += timedelta(days=1)
         if scored and last:
             said = self.say(user, "no_spend") if last.result == "no_spend" else None
-            self.tg.send_message(uid, "🌙 <b>Mochi's verdict for yesterday</b>\n" + mochi.verdict(last)
-                                 + (f"\n<i>{escape(said, quote=False)}</i>" if said else ""), silent=True)
+            self.send_mochi(conn, user, uid, "🌙 <b>Mochi's verdict for yesterday</b>\n" + mochi.verdict(last)
+                            + (f"\n<i>{escape(said, quote=False)}</i>" if said else ""), silent=True)
             self.refresh_pinned(conn, db.get_user(conn, uid), today)
         return scored
 
@@ -1225,8 +1226,26 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
     def cmd_mochi(self, conn, user, chat_id, args, **_):
         today = self.today_for(user)
-        self.tg.send_message(chat_id, self.mochi_card(conn, user, today))
+        self.send_mochi(conn, user, chat_id, self.mochi_card(conn, user, today))
         self.refresh_pinned(conn, user, today)
+
+    def send_mochi(self, conn, user: dict, chat_id: int, caption: str, silent: bool = False) -> None:
+        """Mochi's picture for her current stage, with `caption`; plain text if there's no picture or it fails."""
+        state = db.mochi_state(conn, user["telegram_id"])
+        name = mochi.art(state["weight"], state["away"]) if state else None
+        path = mochi.ART_DIR / f"{name}.jpg" if name else None
+        if path and path.exists() and len(caption) <= 1024:
+            data = path.read_bytes()
+            key = f"mochi/{path.name}@{hashlib.sha1(data).hexdigest()[:8]}"  # new art -> new upload
+            try:
+                cached = db.media_file_id(conn, key)
+                sent = self.tg.send_photo(chat_id, cached or data, caption=caption, filename=path.name, silent=silent)
+                if not cached and sent and sent.get("photo"):
+                    db.save_media(conn, key, sent["photo"][-1]["file_id"])
+                return
+            except Exception:
+                log.exception("Mochi's picture not sent, sending text")
+        self.tg.send_message(chat_id, caption, silent=silent)
 
     def cmd_streak(self, conn, user, chat_id, args, **_):
         today = self.today_for(user)
