@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Optional
 
 
 def normalize(word: str) -> str:
@@ -49,9 +48,3 @@ def phrase_keys(description: str) -> list[str]:
             if k not in keys:
                 keys.append(k)
     return keys
-
-
-def merchant_key(description: str) -> Optional[str]:
-    """The first meaningful word ("Grab to work" -> "grab")."""
-    keys = phrase_keys(description)
-    return keys[-1] if keys else None

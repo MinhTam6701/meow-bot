@@ -7,7 +7,7 @@ import pytest
 from meow import vision
 from meow.models import CategoryInfo, ParseContext, WalletInfo
 from meow.photo_flow import same_person
-from tests.test_bot_flow import ME, buttons, env  # noqa: F401  (fixture)
+from tests.support import ME, buttons
 
 # NOW in the fixture is 29 Sep 2026, 22:30 in Singapore.
 

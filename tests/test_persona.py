@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from meow import db
 
-from tests.test_bot_flow import ME, buttons, env  # noqa: F401  (fixture)
+from tests.support import ME
 
 
 def facts(env) -> str:

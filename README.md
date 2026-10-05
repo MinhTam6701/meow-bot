@@ -1,8 +1,9 @@
 # 🐱 M.E.O.W. — My Expense & Outflow Watcher
 
-A Telegram bot that logs money from plain chat messages. **v1 (M1 proof of concept):**
-chat logging (rules first, Claude Haiku when unsure), confirm card with OK / Undo /
-Category / Wallet buttons, `/today`, `/month`, `/balance`, `/setbalance`, `/undo`.
+A Telegram bot that logs money from plain chat messages, voice notes and payment screenshots.
+Rules parse simple messages, Claude Haiku the rest; every entry gets a confirm card (OK / Undo /
+Category / Wallet) and a reply from your persona. Also: budgets, Mochi the cat, streaks, a monthly
+report with a balance check, and SGD/VND with daily exchange rates. Feature tables below.
 
 ```
 Telegram ──webhook──▶ Vercel (FastAPI, api/index.py)
@@ -19,18 +20,27 @@ all money maths is plain, tested code. Undo never deletes: it appends a reversal
 
 | Path | What it is |
 |---|---|
-| `api/index.py` | Vercel entry point (`POST /api/telegram`, `GET /api/health`) |
-| `meow/bot.py` | Messages, commands and button handling |
+| `api/index.py` | Vercel entry point: Telegram webhook and the scheduler tick (any path; secrets decide) |
+| `meow/bot.py` | Messages, commands, buttons and the scheduled tick |
 | `meow/parser_rules.py` | Rule parser for simple messages (`pho 65k`, `grab 12.5 yesterday`) |
 | `meow/parser_llm.py` | Claude fallback with forced tool calling |
-| `meow/money.py` | Amount reading (`65k`, `1tr2`, `65.000`), minor units, formatting |
+| `meow/money.py` | Amount reading (`65k`, `1tr2`, `65.000`, “50 nghìn”), minor units, formatting |
+| `meow/transfers.py` | “move 200 from DBS to Cash” and other wallet transfers |
+| `meow/fx.py` | Daily exchange rates and SGD conversion |
+| `meow/persona_llm.py` | The persona's reply to each entry (Claude) |
+| `meow/personas.py` | Pre-written lines: reminders, verdicts, report, fallback |
+| `meow/vision.py`, `meow/photo_flow.py` | Reading screenshots; logging or asking about each payment |
+| `meow/speech.py` | Voice notes to text (Groq Whisper) |
+| `meow/budgets.py`, `meow/mochi.py`, `meow/streak.py`, `meow/report.py` | Budgets, Mochi, streak, monthly report |
+| `meow/importer.py` | Money Manager import |
 | `meow/db.py` | All SQL |
 | `meow/cards.py` | Confirm card text and buttons |
-| `supabase/migrations/0001_init.sql` | Database schema (already applied to your project) |
+| `supabase/migrations/` | Database schema, applied in order (0001 to 0008 are on your project) |
 | `scripts/poll.py` | Run the bot on your laptop, no public URL needed |
-| `scripts/set_webhook.py` | Point Telegram at your Vercel URL |
-| `scripts/eval_parser.py` | Measure parser accuracy and cost on the sample messages |
-| `tests/` | Unit tests + end-to-end tests against a real Postgres |
+| `scripts/set_webhook.py` | Point Telegram at your Vercel URL and refresh the command menu |
+| `scripts/eval_parser.py`, `scripts/eval_history.py` | Parser accuracy and cost |
+| `scripts/try_persona.py`, `scripts/try_photo.py` | See real persona replies / what Claude reads from screenshots |
+| `tests/` | Unit tests + end-to-end tests against a real Postgres (`conftest.py`, `support.py`) |
 
 ## Currency rules
 
@@ -51,7 +61,7 @@ python -m venv .venv
 .venv\Scripts\activate            # Windows  (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements-dev.txt
 copy .env.example .env            # then fill in the values
-python -m pytest                  # 58 unit tests; DB tests skip without TEST_DATABASE_URL
+python -m pytest                  # end-to-end tests skip without TEST_DATABASE_URL (see tests/conftest.py)
 python scripts/eval_parser.py     # parser accuracy + cost with the real Claude
 python scripts/poll.py            # now message your bot on Telegram
 ```
@@ -139,8 +149,3 @@ python scripts/eval_history.py EXPORT.xlsx [--claude]   # accuracy on your last 
 Entries come from the export, balances from the backup (one opening-balance entry per wallet makes
 them match exactly). Phrases you used consistently become learned rules. Re-running replaces the
 previous import. Keep your files out of the repo (`.gitignore` blocks .xlsx/.csv/.mmbackup).
-
-## Not in M2 (next milestones)
-Transfers, budgets, FX conversion to SGD, personas, end-of-day reminder (via Supabase
-pg_cron → a Vercel endpoint, since Vercel Hobby cron runs only once a day), merchant-rule
-learning, receipts and voice, Mochi.

@@ -7,7 +7,7 @@ from meow.money import normalize_spoken
 from meow.parser_llm import LLMCallLog
 from tests.parser_cases import make_context
 from meow.parser_rules import parse_with_rules
-from tests.test_bot_flow import ME, env  # noqa: F401  (fixture)
+from tests.support import ME
 
 
 class FakeSTT:

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Callable, Optional
 
-from pydantic import ValidationError
 
 from .defaults import CATEGORY_HINTS
 from .models import Entry, ParseContext, ParseResult

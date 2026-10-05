@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from tests.test_bot_flow import ME, buttons, env  # noqa: F401  (fixture)
+from tests.support import ME, buttons
 
 pytestmark = pytest.mark.skipif(__import__("os").getenv("TEST_DATABASE_URL") is None, reason="TEST_DATABASE_URL not set")
 SGT = timezone(timedelta(hours=8))

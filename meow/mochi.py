@@ -7,11 +7,9 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
 
 from .money import fmt
 
-START_WEIGHT = 50
 RETURN_WEIGHT = 20     # weight when she comes back from grandma's
 RETURN_AFTER = 3       # on-budget days in a row while away
 MAX_DELTA = 3

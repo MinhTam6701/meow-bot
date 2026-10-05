@@ -10,7 +10,6 @@ Asked first (buttons), never logged straight away:
 from __future__ import annotations
 
 import logging
-from datetime import date
 from decimal import Decimal
 from html import escape
 from typing import Optional
@@ -25,7 +24,6 @@ from .transfers import TransferRequest
 
 log = logging.getLogger(__name__)
 
-FLAG_ORDER = ("dup", "own", "person", "big")
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 

@@ -5,7 +5,7 @@ import pytest
 
 from meow.bot import next_monthly
 from meow.text import phrase_keys
-from tests.test_bot_flow import ME, buttons, env  # noqa: F401  (fixture)
+from tests.support import ME, buttons
 
 pytestmark = pytest.mark.skipif(__import__("os").getenv("TEST_DATABASE_URL") is None, reason="TEST_DATABASE_URL not set")
 SGT = timezone(timedelta(hours=8))
@@ -115,7 +115,6 @@ def test_rules_listing_and_forget_phrase(env):
 def test_your_corrections_beat_imported_history(env):
     env.say("/start")
     transport = one(env, "select id from categories where name = 'Transport'")["id"]
-    fun = one(env, "select id from categories where name = 'Entertainment'")["id"]
     env.conn.execute("insert into merchant_rules (user_id, keyword, category_id, corrections) values (%s, 'chuyen nha', %s, 14)",
                      (ME, transport))
     assert "Transport" in env.say("chuyển nhà 20").text

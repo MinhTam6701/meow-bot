@@ -1,7 +1,8 @@
-"""Persona lines. The persona changes the tone only; numbers are filled in by code.
+"""Pre-written persona lines. The persona changes the tone only; numbers are filled in by code.
 
-Lines are written ahead of time (no LLM call), so cards stay instant and free.
-Situations: expense, big, income, no_spend, reminder, budget_warn, budget_over.
+Used for the reminder, the night verdict, the monthly report and the /persona sample, and as the
+fallback when Claude is unavailable (normally persona_llm writes the reply to each entry).
+Situations: report, expense, big, income, no_spend, reminder.
 Tone: 'soft' for roast 0-1, 'spicy' for roast 2-3.
 """
 from __future__ import annotations
@@ -50,15 +51,6 @@ LINES: dict[str, dict[str, dict[str, dict[str, list[str]]]]] = {
             "soft": {"en": ["🐱 Meow. Nothing logged today. What did you spend?"], "vi": ["🐱 Meo. Hôm nay chưa ghi gì hết. Tiêu gì rồi kể nghe?"]},
             "spicy": {"en": ["😼 Silence all day? Suspicious. What did you buy?"], "vi": ["😼 Im lặng cả ngày? Đáng ngờ lắm nha. Mua gì rồi?"]},
         },
-        "budget_warn": {
-            "soft": {"en": ["Careful, {category} is at {pct}% of its budget. 🐾"], "vi": ["Cẩn thận, {category} đã dùng {pct}% ngân sách rồi. 🐾"]},
-            "spicy": {"en": ["{category} at {pct}%. My tail is twitching. 😾"], "vi": ["{category} lên {pct}% rồi. Đuôi mèo bắt đầu giật giật đó. 😾"]},
-        },
-        "budget_over": {
-            "soft": {"en": ["{category} is over budget ({pct}%). Let's slow down. 😿"], "vi": ["{category} vượt ngân sách rồi ({pct}%). Chậm lại chút nha. 😿"]},
-            "spicy": {"en": ["{category} blew past its budget ({pct}%). I'm sitting on your keyboard until you stop. 🙀"],
-                      "vi": ["{category} vượt ngân sách ({pct}%). Mèo sẽ nằm lên bàn phím tới khi bạn ngừng mua. 🙀"]},
-        },
     },
     "mom": {
         "report": {
@@ -88,14 +80,6 @@ LINES: dict[str, dict[str, dict[str, dict[str, list[str]]]]] = {
             "soft": {"en": ["👩 Have you eaten? And what did you spend today?"], "vi": ["👩 Ăn cơm chưa con? Hôm nay tiêu gì rồi?"]},
             "spicy": {"en": ["👩 You didn't write anything today. Don't hide it from Mom."], "vi": ["👩 Hôm nay chưa ghi gì hết. Đừng có giấu mẹ."]},
         },
-        "budget_warn": {
-            "soft": {"en": ["{category} is at {pct}% already. Be careful."], "vi": ["{category} đã {pct}% rồi đó. Cẩn thận nha con."]},
-            "spicy": {"en": ["{category} at {pct}%?! It's not even the end of the month!"], "vi": ["{category} {pct}% rồi?! Chưa hết tháng mà con!"]},
-        },
-        "budget_over": {
-            "soft": {"en": ["{category} is over budget ({pct}%). Let's cook at home this week."], "vi": ["{category} vượt ngân sách rồi ({pct}%). Tuần này nấu ăn ở nhà nha."]},
-            "spicy": {"en": ["{category} over budget ({pct}%)! I'm calling your father."], "vi": ["{category} vượt ngân sách ({pct}%)! Để mẹ gọi cho ba con."]},
-        },
     },
     "monk": {
         "report": {
@@ -124,14 +108,6 @@ LINES: dict[str, dict[str, dict[str, dict[str, list[str]]]]] = {
         "reminder": {
             "soft": {"en": ["🧘 The day is ending. What passed through your hands?"], "vi": ["🧘 Ngày sắp tàn. Hôm nay tiền đã đi qua tay bạn thế nào?"]},
             "spicy": {"en": ["🧘 An unrecorded day is an unexamined day. What did you spend?"], "vi": ["🧘 Một ngày không ghi chép là một ngày không tỉnh thức. Bạn đã tiêu gì?"]},
-        },
-        "budget_warn": {
-            "soft": {"en": ["{category} is at {pct}%. Walk gently."], "vi": ["{category} đã đạt {pct}%. Hãy bước nhẹ thôi."]},
-            "spicy": {"en": ["{category} at {pct}%. The river nears its banks."], "vi": ["{category} {pct}%. Dòng sông sắp tràn bờ."]},
-        },
-        "budget_over": {
-            "soft": {"en": ["{category} has passed its budget ({pct}%). Let go of the next purchase."], "vi": ["{category} vượt ngân sách ({pct}%). Hãy buông bỏ món tiếp theo."]},
-            "spicy": {"en": ["{category} over budget ({pct}%). Even the monk sighs."], "vi": ["{category} vượt ngân sách ({pct}%). Đến sư cũng phải thở dài."]},
         },
     },
 }

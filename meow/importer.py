@@ -19,7 +19,7 @@ import statistics
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 

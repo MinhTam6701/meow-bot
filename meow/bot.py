@@ -85,6 +85,7 @@ COMMANDS = [
 ]
 
 PERSONA_ICON = {"cat": "😼", "mom": "👩", "monk": "🧘"}
+NO_AMOUNT = "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help."
 CHAT_WINDOW = timedelta(minutes=30)  # a reply without an amount this soon after a reaction is chat
 
 SERVICE_KEYS = ("pinned_message", "new_chat_members", "left_chat_member", "message_auto_delete_timer_changed",
@@ -188,7 +189,7 @@ class Bot(PhotoFlow):
             self.tg.send_message(chat_id, f"That's a long one! Keep voice notes under {self.s.voice_max_seconds} seconds, "
                                           "e.g. “lunch 12 dollars, grab 15”.")
             return
-        if db.llm_calls_since(conn, uid, self.clock() - timedelta(days=1)) >= self.s.llm_daily_call_cap:
+        if not self.under_ai_cap(conn, uid):
             self.tg.send_message(chat_id, "I've hit today's AI limit, so I can't listen right now. Type it instead 🐾")
             return
         self.tg.send_chat_action(chat_id, "typing")
@@ -254,12 +255,11 @@ class Bot(PhotoFlow):
 
         if not has_amount(to_parse):
             db.set_pending(conn, uid, None)
-            reply("I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
+            reply(NO_AMOUNT)
             return
 
         llm_logs = []
-        since = self.clock() - timedelta(days=1)
-        llm_allowed = db.llm_calls_since(conn, uid, since) < self.s.llm_daily_call_cap
+        llm_allowed = self.under_ai_cap(conn, uid)
         result = parse_message(to_parse, ctx, llm_client=self.llm, model=self.s.anthropic_model,
                                on_llm_call=llm_logs.append, llm_allowed=llm_allowed,
                                examples=lambda t: self.similar_examples(conn, uid, t))
@@ -473,10 +473,12 @@ class Bot(PhotoFlow):
         return "\n".join(self.budget_alerts(conn, user, rows, today)) or None
 
     # ------------------------------------------------------------------ persona reactions
-    def llm_ok(self, conn, uid: int) -> bool:
-        if self.llm is None:
-            return False
+    def under_ai_cap(self, conn, uid: int) -> bool:
+        """At most LLM_DAILY_CALL_CAP AI calls (parsing, persona, photos, voice) per rolling 24 hours."""
         return db.llm_calls_since(conn, uid, self.clock() - timedelta(days=1)) < self.s.llm_daily_call_cap
+
+    def llm_ok(self, conn, uid: int) -> bool:
+        return self.llm is not None and self.under_ai_cap(conn, uid)
 
     def persona_system(self, user: dict) -> str:
         return persona_llm.build_system(user["persona"], user["roast_level"], user["language"],
@@ -578,7 +580,7 @@ class Bot(PhotoFlow):
         """The user answered the persona (e.g. "it was a birthday dinner")."""
         uid = user["telegram_id"]
         if not self.llm_ok(conn, uid):
-            self.tg.send_message(chat_id, "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
+            self.tg.send_message(chat_id, NO_AMOUNT)
             return
         facts = (f"Earlier you texted them: \"{user['last_reaction']}\"\n"
                  f"They replied: \"{text}\"\n\n"
@@ -590,7 +592,7 @@ class Bot(PhotoFlow):
         if reply:
             self.send_reaction(conn, user, chat_id, reply)
         else:
-            self.tg.send_message(chat_id, "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
+            self.tg.send_message(chat_id, NO_AMOUNT)
 
     def budget_alerts(self, conn, user: dict, rows: list[dict], today: date) -> list[str]:
         uid, home = user["telegram_id"], user["home_currency"]
@@ -730,7 +732,7 @@ class Bot(PhotoFlow):
         self.tg.send_message(chat_id, HELP)
 
     def cmd_today(self, conn, user, chat_id, args, **_):
-        uid, today, home = user["telegram_id"], self.today_for(user), user["home_currency"]
+        uid, today = user["telegram_id"], self.today_for(user)
         entries = db.entries_on(conn, uid, today)
         marked = db.logged_on(conn, uid, today) and not entries
         if not entries:
@@ -1079,7 +1081,7 @@ class Bot(PhotoFlow):
         self.tg.send_message(chat_id, "\n".join(lines))
 
     def cmd_recurring(self, conn, user, chat_id, args, **_):
-        uid, home, today = user["telegram_id"], user["home_currency"], self.today_for(user)
+        uid, today = user["telegram_id"], self.today_for(user)
         usage = ("Add one: <code>/recurring add rent 800 on 1</code> (logs on the 1st of every month)\n"
                  "Stop one: <code>/recurring stop 2</code>")
         parts = args.split()

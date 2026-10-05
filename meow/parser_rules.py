@@ -16,7 +16,7 @@ from typing import Optional
 
 from .models import Entry, ParseContext
 from .money import CURRENCY_ALIASES, parse_amount_token
-from .text import DATE_LIKE, merchant_key, normalize, phrase_keys  # noqa: F401  (re-exported)
+from .text import DATE_LIKE, normalize, phrase_keys  # noqa: F401  (re-exported)
 
 # Keyword -> category, on accent-free lower-case words. Two- and three-word entries are
 # written joined ("antrua" = "ăn trưa") and beat single words.

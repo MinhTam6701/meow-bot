@@ -224,17 +224,6 @@ def entries_on(conn, user_id: int, day: date) -> list[dict]:
     ).fetchall()
 
 
-def spent_on(conn, user_id: int, day: date) -> dict[str, int]:
-    """Money spent on a day, per currency, as positive minor units."""
-    rows = conn.execute(
-        """select currency, -sum(amount_minor)::bigint as spent
-           from transactions
-           where user_id = %s and occurred_on = %s and type = 'expense'
-           group by currency having sum(amount_minor) <> 0 order by currency""",
-        (user_id, day),
-    ).fetchall()
-    return {r["currency"]: r["spent"] for r in rows}
-
 
 def month_summary(conn, user_id: int, first_day: date, next_first_day: date) -> list[dict]:
     """Totals per currency, type and category. Reversals cancel out in the sums."""
@@ -336,11 +325,6 @@ def month_by_category_home(conn, user_id: int, first_day: date, next_first_day: 
 
 # --- M2: reminders ---------------------------------------------------------------
 
-def users_for_tick(conn) -> list[dict]:
-    return conn.execute(
-        "select * from users where reminders_on or snooze_until is not null order by telegram_id"
-    ).fetchall()
-
 
 def claim_reminder(conn, user_id: int, day: date) -> bool:
     row = conn.execute(
@@ -377,11 +361,6 @@ def mark_no_spend(conn, user_id: int, day: date) -> bool:
     ).fetchone()
     return row is not None
 
-
-def claim_job(conn, key: str) -> bool:
-    return conn.execute(
-        "insert into job_runs (key) values (%s) on conflict do nothing returning key", (key,)
-    ).fetchone() is not None
 
 
 # --- M2: merchant rules ----------------------------------------------------------
@@ -492,13 +471,6 @@ def past_descriptions(conn, user_id: int, limit: int = 3000) -> list[dict]:
         (user_id, limit),
     ).fetchall()
 
-
-def seed_rule(conn, user_id: int, keyword: str, category_id: int, count: int) -> None:
-    conn.execute(
-        """insert into merchant_rules (user_id, keyword, category_id, corrections) values (%s, %s, %s, %s)
-           on conflict (user_id, keyword, category_id) do update set corrections = greatest(merchant_rules.corrections, excluded.corrections)""",
-        (user_id, keyword, category_id, count),
-    )
 
 
 # --- M2.1: recurring entries ----------------------------------------------------

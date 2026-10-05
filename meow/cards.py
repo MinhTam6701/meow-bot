@@ -16,12 +16,6 @@ def day_label(day: date, today: date) -> str:
     return day.strftime("%a %d %b")
 
 
-def totals_line(spent: dict[str, int]) -> str:
-    """Per-currency totals (used when no exchange rate is known)."""
-    if not spent:
-        return "Nothing spent today."
-    return "Today: " + " · ".join(fmt(v, c) for c, v in spent.items()) + " spent"
-
 
 def totals_line_home(home: str, spent_home: int, unconverted: dict[str, int]) -> str:
     parts = [fmt(spent_home, home)] if spent_home or not unconverted else []
