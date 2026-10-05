@@ -1,6 +1,8 @@
 """The persona as an AI character: a separate message that reacts to what was logged."""
 from datetime import timedelta
 
+from meow import db
+
 from tests.test_bot_flow import ME, buttons, env  # noqa: F401  (fixture)
 
 
@@ -17,7 +19,8 @@ def test_reaction_is_its_own_message_with_the_facts(env):
     f = facts(env)
     assert '"lunch", S$7.32, category Food & Drinks, wallet DBS' in f
     assert "First time they've logged this exact item" in f
-    assert "Mochi's daily bowl" in f and "left today" in f
+    assert "Daily allowance for everyday spending: S$20.00; S$12.68 left today." in f
+    assert "Mochi" not in f and "Never mention Mochi" in env.llm.chats[-1]["system"]
     assert env.llm.chats[-1]["model"] == "claude-haiku-4-5"
     assert "tools" not in env.llm.chats[-1]
     assert env.conn.execute("select count(*) n from llm_calls where purpose = 'persona'").fetchone()["n"] == 1
@@ -84,3 +87,16 @@ def test_plain_persona_never_chats(env):
     env.say("lunch 45")
     assert "didn't see an amount" in env.say("it was a birthday").text
     assert env.llm.chats == []
+
+
+def test_undo_takes_the_entry_off_today_and_the_allowance(env):
+    env.say("/start")
+    env.say("/budget everyday 600")
+    env.say("lunch 7")
+    env.say("dinner 45")
+    env.say("/undo")
+    today = env.bot.today_for({"timezone": "Asia/Singapore"})
+    assert db.spent_on_home(env.conn, ME, today) == (700, {})  # the undo took S$45 off in SGD too
+    card = env.say("kopi 2")
+    assert "S$9.00 spent" in card.text and "+ -" not in card.text
+    assert "S$11.00 left today" in facts(env)

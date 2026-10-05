@@ -507,10 +507,9 @@ class Bot:
             bowl = mochi.bowl(budget, today)
             used = db.spent_for_mochi(conn, uid, today)
             left = bowl - used
-            lines.append(f"Mochi's daily bowl (everyday allowance): {fmt(bowl, home)}; "
-                         + (f"{fmt(left, home)} left today." if left >= 0 else f"over by {fmt(-left, home)} today.")
-                         + f" Mochi's weight {state['weight']}/100" + (" (she's away at grandma's)." if state["away"] else "."))
-            lines.append("Rent, bills, subscriptions and study don't count against the bowl.")
+            lines.append(f"Daily allowance for everyday spending: {fmt(bowl, home)}; "
+                         + (f"{fmt(left, home)} left today." if left >= 0 else f"over by {fmt(-left, home)} today."))
+            lines.append("Rent, bills, subscriptions and study don't count against the allowance.")
         for alert in self.budget_alerts_plain(conn, user, rows, today):
             lines.append(alert)
         if reached:

@@ -164,9 +164,9 @@ def undo_batch(conn, user_id: int, batch_id) -> int:
     rows = conn.execute(
         """insert into transactions
            (user_id, batch_id, wallet_id, category_id, type, amount_minor, currency,
-            description, occurred_on, source, parser, reverses_id)
+            description, occurred_on, source, parser, reverses_id, fx_rate, amount_home)
            select user_id, batch_id, wallet_id, category_id, type, -amount_minor, currency,
-                  description, occurred_on, 'undo', 'command', id
+                  description, occurred_on, 'undo', 'command', id, fx_rate, -amount_home
            from live_transactions
            where batch_id = %s and user_id = %s
            returning id""",
@@ -579,6 +579,7 @@ def everyday_spent(conn, user_id: int, start: date, end: date) -> int:
            from transactions t left join categories c on c.id = t.category_id
            where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
              and t.source <> 'recurring' and coalesce(t.description, '') not ilike '%%#planned%%'
+             and not exists (select 1 from transactions o where o.id = t.reverses_id and o.source = 'recurring')
              and coalesce(c.name, '') <> all(%s)""",
         (user_id, start, end, list(FIXED_CATEGORIES)),
     ).fetchone()
