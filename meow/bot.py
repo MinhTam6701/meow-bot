@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import db, fx, mochi, persona_llm, report, speech, streak as streaks
+from . import ask, db, fx, insights, mochi, persona_llm, report, speech, streak as streaks
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
@@ -27,6 +27,7 @@ from .parser_llm import cost_usd
 from .parser_rules import parse_with_rules
 from .text import phrase_keys, phrase_words
 from .photo_flow import PhotoFlow, image_of
+from .subs_flow import SubscriptionFlow
 from .personas import LANGUAGES, PERSONAS, ROAST_LABELS, line as persona_line
 from .telegram import TelegramAPI
 from .transfers import TransferRequest, parse_transfer
@@ -41,6 +42,8 @@ Just type what you spent or received:
 • <code>salary 4200 to DBS</code>
 • <code>+50 refund</code>
 • <code>move 200 from DBS to Cash</code>
+
+Ask about your spending too: <i>how much on Grab in August?</i>
 
 Plain numbers are SGD. <code>65k</code>, <code>65.000</code> or <code>1tr2</code> are VND.
 Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
@@ -57,6 +60,8 @@ Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
 /mochi – how Mochi is doing
 /streak – your logging streak
 /report – last month's report
+/recap – this week so far, with patterns (sent every Sunday 20:00)
+/subscriptions – subscriptions and renewals
 /check – check balances against your bank apps
 /persona – who talks to you
 /settings – your settings
@@ -80,13 +85,16 @@ COMMANDS = [
     ("mochi", "How Mochi is doing"),
     ("streak", "Your logging streak"),
     ("report", "Last month's report"),
+    ("recap", "This week so far, with patterns"),
+    ("subscriptions", "Subscriptions and renewals"),
     ("check", "Check balances (pick wallets: /wallet check)"),
     ("help", "How to log"),
 ]
 
 PERSONA_ICON = {"cat": "😼", "mom": "👩", "monk": "🧘"}
 NO_AMOUNT = "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help."
-CHAT_WINDOW = timedelta(minutes=30)  # a reply without an amount this soon after a reaction is chat
+CHAT_WINDOW = timedelta(minutes=30)
+RECAP_HOUR = 20  # Sunday recap, local time  # a reply without an amount this soon after a reaction is chat
 
 SERVICE_KEYS = ("pinned_message", "new_chat_members", "left_chat_member", "message_auto_delete_timer_changed",
                 "chat_background_set", "forum_topic_created", "write_access_allowed")
@@ -94,7 +102,7 @@ TOTAL_WORDS = {"total", "all", "month", "overall", "tong"}
 WALLET_TYPES = {"cash", "bank", "ewallet", "credit"}
 
 
-class Bot(PhotoFlow):
+class Bot(PhotoFlow, SubscriptionFlow):
     def __init__(self, settings: Settings, tg: TelegramAPI, llm_client: Any = None,
                  clock: Optional[Callable[[], datetime]] = None,
                  fx_fetch: Optional[fx.Fetcher] = None, rng: Optional[random.Random] = None,
@@ -228,6 +236,12 @@ class Bot(PhotoFlow):
         def reply(message: str) -> None:
             self.tg.send_message(chat_id, prefix + message)
 
+        if (not user.get("pending_input") and ask.is_question(said, chatting=self.recent_reaction(user))
+                and not parse_with_rules(text, ctx)):
+            db.set_pending(conn, uid, None)
+            reply(self.answer_question(conn, user, ctx, said))
+            return
+
         transfer = parse_transfer(text, ctx)
         if isinstance(transfer, str):
             reply(transfer)
@@ -274,6 +288,16 @@ class Bot(PhotoFlow):
         db.set_pending(conn, uid, None)
         self.save_entries(conn, user, chat_id, ctx, result.entries, to_parse, parser=result.parser, source=source,
                           extra_note=f"🎙 “{heard}”" if heard else None)
+
+    def answer_question(self, conn, user: dict, ctx: ParseContext, question: str) -> str:
+        uid = user["telegram_id"]
+        if not self.llm_ok(conn, uid):
+            return "I can't look that up right now 😿 Try /month or /report."
+        q, call = ask.to_query(self.llm, self.s.anthropic_model, question, ctx)
+        db.log_llm_call(conn, uid, "ask", call, cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
+        if q is None:
+            return "I couldn't work out what to look up. Try “how much on Grab in August?”"
+        return ask.answer(db.entries_between(conn, uid, q.date_from, q.date_to, q.type), q, user["home_currency"])
 
     def day_total_entry(self, user: dict, text: str, today: date) -> Optional[Entry]:
         """After a reminder, a bare number ("45") is the day's total."""
@@ -1191,6 +1215,36 @@ class Bot(PhotoFlow):
             return
         self.send_next_check(conn, user, chat_id, month)
 
+    def maybe_recap(self, conn, user: dict, now: datetime) -> bool:
+        """Sunday from RECAP_HOUR (local): the week in numbers, patterns, and renewals coming up."""
+        local = now.astimezone(ZoneInfo(user["timezone"]))
+        if local.weekday() != 6 or local.hour < RECAP_HOUR:
+            return False
+        if not db.claim_job(conn, f"recap:{user['telegram_id']}:{local.date()}"):
+            return False
+        self.send_recap(conn, user, user["telegram_id"], local.date(), scheduled=True)
+        return True
+
+    def send_recap(self, conn, user: dict, chat_id: int, today: date, scheduled: bool = False) -> None:
+        body, facts = insights.recap(conn, user, today)
+        line = None
+        if user["persona"] in PERSONA_ICON and self.llm_ok(conn, user["telegram_id"]):
+            text = ("This is the weekly recap, not a single entry. The numbers are already shown. In 1-2 short "
+                    "sentences, react to the week as a whole: praise what went well or nudge one thing.\n\n"
+                    + "\n".join(facts))
+            line, call = persona_llm.react(self.llm, self.s.persona_model, self.persona_system(user), text)
+            db.log_llm_call(conn, user["telegram_id"], "recap", call,
+                            cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
+        if line:
+            body += f"\n\n{PERSONA_ICON[user['persona']]} <i>{escape(line, quote=False)}</i>"
+        if scheduled:
+            self.send_quietly(chat_id, body)
+        else:
+            self.tg.send_message(chat_id, body)
+
+    def cmd_recap(self, conn, user, chat_id, args, **_):
+        self.send_recap(conn, user, chat_id, self.today_for(user))
+
     def maybe_monthly_report(self, conn, user: dict, now: datetime) -> bool:
         """On the 1st from 09:00 (local), send last month's report and start the balance check."""
         local = now.astimezone(ZoneInfo(user["timezone"]))
@@ -1346,6 +1400,9 @@ class Bot(PhotoFlow):
                     if action == "setcat":
                         note = self.learn(conn, uid, tx, int(target)) or note
 
+            elif action == "sub":
+                note = self.on_subscription_button(conn, uid, rest, chat_id, message_id)
+
             elif action == "pi":
                 note = self.on_pending_button(conn, uid, rest, chat_id, message_id)
 
@@ -1473,6 +1530,18 @@ class Bot(PhotoFlow):
                         stats["reports"] = stats.get("reports", 0) + 1
             except Exception:
                 log.exception("monthly report failed for user %s", user["telegram_id"])
+            try:
+                with conn.transaction():
+                    if self.maybe_daily_subscriptions(conn, user, now):
+                        stats["subscriptions"] = stats.get("subscriptions", 0) + 1
+            except Exception:
+                log.exception("subscriptions failed for user %s", user["telegram_id"])
+            try:
+                with conn.transaction():
+                    if self.maybe_recap(conn, user, now):
+                        stats["recaps"] = stats.get("recaps", 0) + 1
+            except Exception:
+                log.exception("weekly recap failed for user %s", user["telegram_id"])
             if not (user["reminders_on"] or user["snooze_until"]):
                 continue
             try:

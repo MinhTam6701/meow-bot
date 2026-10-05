@@ -733,3 +733,92 @@ def update_pending(conn, item_id: int, **fields) -> None:
     sets = ", ".join(f"{k} = %s" for k in fields)
     vals = [Jsonb(v) if k == "entry" else v for k, v in fields.items()]
     conn.execute(f"update pending_items set {sets} where id = %s", (*vals, item_id))
+
+
+# --- M4: subscriptions, scheduled jobs, insights ---------------------------------
+
+def claim_job(conn, key: str) -> bool:
+    """True the first time a key is claimed: makes daily/weekly jobs run once."""
+    return conn.execute("insert into job_runs (key) values (%s) on conflict do nothing returning key",
+                        (key,)).fetchone() is not None
+
+
+def expense_charges(conn, user_id: int, since: date) -> list[dict]:
+    """Every live expense since a date (not auto-logged ones), for the subscription detector."""
+    return conn.execute(
+        """select t.occurred_on, -t.amount_minor as amount, t.currency, t.description, t.wallet_id,
+                  t.category_id, c.name as category
+           from live_transactions t left join categories c on c.id = t.category_id
+           where t.user_id = %s and t.type = 'expense' and t.occurred_on >= %s and t.source <> 'recurring'
+           order by t.occurred_on, t.id""",
+        (user_id, since)).fetchall()
+
+
+def subscriptions(conn, user_id: int, statuses: tuple[str, ...] = ("active",)) -> list[dict]:
+    return conn.execute(
+        """select s.*, w.name as wallet_name from subscriptions s left join wallets w on w.id = s.wallet_id
+           where s.user_id = %s and s.status = any(%s) order by s.next_due, s.id""",
+        (user_id, list(statuses))).fetchall()
+
+
+def subscription_keys(conn, user_id: int) -> set[tuple[str, str]]:
+    """(key, currency) of every subscription ever suggested, so nothing is asked twice."""
+    return {(r["key"], r["currency"]) for r in
+            conn.execute("select key, currency from subscriptions where user_id = %s", (user_id,)).fetchall()}
+
+
+def add_subscription(conn, user_id: int, key: str, currency: str, name: str, amount_minor: int, interval: str,
+                     last_charge_on: date, next_due: date, wallet_id: Optional[int], category_id: Optional[int],
+                     status: str = "suggested") -> Optional[int]:
+    row = conn.execute(
+        """insert into subscriptions (user_id, key, currency, name, amount_minor, interval, status, wallet_id,
+                                      category_id, last_charge_on, next_due)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           on conflict (user_id, key, currency) do nothing returning id""",
+        (user_id, key, currency, name, amount_minor, interval, status, wallet_id, category_id,
+         last_charge_on, next_due)).fetchone()
+    return row["id"] if row else None
+
+
+def get_subscription(conn, sub_id: int) -> Optional[dict]:
+    return conn.execute("select * from subscriptions where id = %s", (sub_id,)).fetchone()
+
+
+SUBSCRIPTION_FIELDS = {"status", "amount_minor", "last_charge_on", "next_due", "reminded_for", "checked_on", "name",
+                       "interval"}
+
+
+def update_subscription(conn, sub_id: int, **fields) -> None:
+    assert set(fields) <= SUBSCRIPTION_FIELDS, fields
+    sets = ", ".join(f"{k} = %s" for k in fields)
+    conn.execute(f"update subscriptions set {sets} where id = %s", (*fields.values(), sub_id))
+
+
+def daily_spend(conn, user_id: int, start: date, end: date, everyday: bool = True) -> dict[date, int]:
+    """Spending per day in home currency, start (incl.) to end (excl.). Everyday = no fixed costs or bills."""
+    extra = ""
+    params: list = [user_id, start, end]
+    if everyday:
+        extra = """and t.source <> 'recurring' and coalesce(t.description, '') not ilike '%%#planned%%'
+                   and coalesce(c.name, '') <> all(%s)
+                   and not exists (select 1 from transactions o where o.id = t.reverses_id and o.source = 'recurring')"""
+        params.append(list(FIXED_CATEGORIES))
+    rows = conn.execute(
+        f"""select t.occurred_on as day, coalesce(-sum(t.amount_home), 0)::bigint as spent
+            from transactions t left join categories c on c.id = t.category_id
+            where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
+              and t.amount_home is not null {extra}
+            group by 1""", params).fetchall()
+    return {r["day"]: r["spent"] for r in rows}
+
+
+def entries_between(conn, user_id: int, start: date, end: date, type_: str) -> list[dict]:
+    """Live entries of a type between two dates (end inclusive), for answering questions."""
+    return conn.execute(
+        """select t.occurred_on, t.description, t.amount_minor, t.currency, t.amount_home,
+                  c.name as category, c.emoji, w.name as wallet
+           from live_transactions t join wallets w on w.id = t.wallet_id
+           left join categories c on c.id = t.category_id
+           where t.user_id = %s and t.type = %s and t.occurred_on between %s and %s
+           order by t.occurred_on, t.id""",
+        (user_id, type_, start, end)).fetchall()

@@ -5,7 +5,8 @@ in SGD and VND. Every entry gets a confirm card (OK / Undo / Category / Wallet) 
 your persona. Mochi the cat lives on your daily allowance, a streak rewards logging every day, and on
 the 1st you get a monthly report and a wallet-by-wallet balance check.
 
-**Status:** M1–M3 done; M4 photos and voice done. Next: subscription detector, then insights.
+**Status:** M1–M4 done: chat, voice and photo logging; personas; budgets; Mochi; streak; monthly report and
+balance check; subscription detector; weekly recap, patterns and questions about your spending.
 
 ```
 Telegram ──webhook──▶ Vercel (FastAPI, api/index.py) ──▶ meow/bot.py
@@ -41,6 +42,7 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | A receipt, bank-app screenshot, card notification or Shopee order | Read by Claude (📸 on the card); see [Photos](#photos) |
 | `45` right after the evening reminder | That day's total |
 | `#planned` in a message | Doesn't count against Mochi's bowl |
+| “how much on Grab in August?”, “tháng này tiêu bao nhiêu cho ăn uống?” | A question: answered from your own entries (see [Questions](#questions)) |
 
 ### Amounts and currencies
 - Plain numbers under 10,000 are **SGD** (`grab 12.5`); 10,000 or more are **VND**.
@@ -64,6 +66,8 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | `/mochi`, `/streak` | How Mochi is doing; your logging streak |
 | `/report`, `/report 2026-09` | Monthly report |
 | `/check` | Balance check now |
+| `/subscriptions` | Tracked subscriptions and monthly total · `scan` · `add Netflix 17.98 monthly` · `stop 2` |
+| `/recap` | This week so far, with patterns (also sent Sundays at 20:00) |
 | `/myname Trinh Minh Tam` | Your name as banks print it (spots transfers to yourself in screenshots) |
 | `/undo`, `/settings`, `/help` | |
 
@@ -83,6 +87,9 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | M3 | Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (gap becomes an adjustment) / skip |
 | M4 | Photos | See below |
 | M4 | Voice | Groq Whisper (`whisper-large-v3`), English, Vietnamese or mixed, up to 2 minutes. Your wallet names are given as a spelling hint |
+| M4 | Subscriptions | See below |
+| M4 | Weekly recap & patterns | Sundays 20:00: the week vs last week and your 4-week average, top categories, days logged, Mochi's good days, patterns, renewals coming up, and one line from your persona. `/recap` any time |
+| M4 | Questions | See below |
 
 ### Photos
 Claude reads the amount actually paid (after vouchers), the date, the bank and who was paid.
@@ -95,6 +102,35 @@ These **ask first** with buttons instead:
 | Sent to a person | Could be spending, a move to your own account, or nothing to log | 💸 Spending (pick category) · 🔁 My own account · 🚫 Don't log |
 | Sent to your own name | Probably moving money between your accounts (`/myname`) | 🔁 Between my accounts · 💸 Spending · 🚫 Don't log |
 | Big amount | Over `PHOTO_CONFIRM_ABOVE` (S$500) | ✅ Log it · ✏️ Category · 🚫 Don't log |
+
+### Subscriptions
+Every day from 10:00 the bot looks for **the same thing at a similar price (±5%) at a regular interval,
+at least twice**: weekly (3 times), monthly, quarterly or yearly, with the latest charge still recent.
+Month words and numbers are ignored, so “Tiền điện thoại tháng 9” and “… tháng 10” match. Food, groceries and
+transport are habits, not subscriptions, and bills that already log themselves (`/recurring`) are skipped.
+
+| When | What you get |
+|---|---|
+| Something repeats | “Is Claude S$30.84 a subscription?” ✅ Yes, track it · ❌ No (never asked again). At most 2 a day |
+| 2 days before a renewal | 🔔 “Netflix S$17.98 renews in 2 days. Cancel before then if you don't need it.” |
+| The price changes | ⚠️ “Spotify went up from S$10.98 to S$11.98.” |
+| Every 3 months | 🤔 “Still using Gym? S$120 a month is about S$1,440 a year.” 👍 Keep · ✂️ I cancelled it |
+
+### Patterns
+Found by plain statistics (Claude only writes the persona line):
+- **Weekends vs weekdays**: “Weekends cost you 40% more a day”, over the last 4 weeks.
+- **Rising categories**: up three weeks in a row.
+- **Budget pace**: “At this pace you'll hit your Shopping budget on the 22nd” (and for Mochi's everyday budget).
+
+The best patterns also appear in the monthly report.
+
+### Questions
+Ask in English, Vietnamese or both: “how much on Grab in August?”, “show me this month by category”,
+“bao nhiêu tiền phở tháng 9”. Claude turns the question into a filter (words, categories, wallets, dates,
+total / list / by category / by month / by wallet); **the bot's code finds the entries and adds them up**.
+The reply shows the filter it used, so a misunderstanding is easy to spot. Entries like “lunch 12?”,
+“total 45” or “mình đã mua sách 200k” are still logged, and right after the persona speaks, “haha really?”
+is chat, not a lookup.
 
 **Privacy:** photos are not stored. Account, card and phone numbers and reference codes are removed
 before anything is saved or recorded. Sending a screenshot as a file (📎 → File) gives a sharper read.
@@ -121,7 +157,9 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/db.py` | All SQL |
 | `meow/cards.py` | Confirm card text and buttons |
 | `meow/config.py`, `meow/runtime.py` | Settings from environment variables; wiring for Vercel |
-| `supabase/migrations/` | Database schema, applied in order (0001 to 0008 are on your project) |
+| `meow/subscriptions.py`, `meow/subs_flow.py` | Spotting subscriptions; tracking, reminders, buttons, `/subscriptions` |
+| `meow/insights.py`, `meow/ask.py` | Patterns and the weekly recap; answering questions |
+| `supabase/migrations/` | Database schema, applied in order (0001 to 0009 are on your project) |
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
 
@@ -157,7 +195,8 @@ Pushing to `main` on GitHub deploys automatically.
 Supabase `pg_cron` calls the Vercel app every 15 minutes with an `X-Cron-Secret` header (stored in Supabase
 Vault as `meow_cron_secret`; the same value is `CRON_SECRET` in Vercel). Each tick: exchange rates, entries
 saved without a rate, due recurring bills, Mochi's score after midnight, the monthly report on the 1st,
-and evening check-ins. Every step is safe to repeat.
+the subscription check (daily from 10:00), the weekly recap (Sundays from 20:00) and evening check-ins.
+Every step is safe to repeat: daily and weekly jobs are claimed once in `job_runs`.
 
 ### Settings (environment variables)
 | Variable | Default | What it does |
@@ -205,7 +244,7 @@ select source, parser, count(distinct batch_id) from transactions where reverses
 
 ## Testing
 
-**118 tests, 217 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
+**155 tests, 254 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
 which is why there are more checks than tests. `tests/README.md` lists every test by name.
 
 ### Two kinds of test
@@ -236,6 +275,8 @@ and `eval_*` scripts, and one test checks that every Claude call matches the rea
 | `test_persona.py` | End-to-end | Persona in its own message, price history facts, answering it, fallback when Claude is down, undo totals | 8 |
 | `test_photos.py` | Both | Card notifications, no date, several payments, duplicates, money to people or yourself, big amounts, files, privacy scrubbing | 21 (25) |
 | `test_voice.py` | Both | Voice notes in English/Vietnamese, transfers by voice, bank names after a comma, Groq down, silence, spoken amounts | 13 (37) |
+| `test_subscriptions.py` | Both | Detection rules (intervals, ±5%, stale, habits, month ends); daily job, buttons, reminders, price changes, quarterly check, `/subscriptions`, failed sends | 23 |
+| `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 14 |
 
 ### Running them
 ```bash
@@ -244,8 +285,8 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **121 passed, 96 skipped**: the end-to-end tests skip.
-To run all 217, install Postgres 16, create an empty database, and set for example
+Without `TEST_DATABASE_URL` you'll see about **135 passed, 119 skipped**: the end-to-end tests skip.
+To run all 254, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.

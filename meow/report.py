@@ -6,7 +6,7 @@ from html import escape
 from typing import Optional
 
 from . import budgets as bud
-from . import db
+from . import db, insights
 from .money import fmt
 
 
@@ -129,6 +129,10 @@ def build(conn, user: dict, first: date, persona_line: Optional[str] = None) -> 
     if day and day["total"]:
         facts.append(f"🔥 Priciest day: {day['day'].strftime('%a %d %b')} ({fmt(day['total'], home)}).")
     lines += ["", "<b>Fun facts</b>"] + facts
+
+    patterns = insights.best_for_report(conn, user, nxt - timedelta(days=1))
+    if patterns:
+        lines += ["", "<b>Patterns</b>"] + patterns
 
     tip = _tip(cats, prev_cats, spent, everyday, home)
     if tip:
