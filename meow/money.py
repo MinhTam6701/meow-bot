@@ -117,3 +117,48 @@ def parse_amount_token(token: str) -> Optional[AmountToken]:
     if value <= 0:
         return None
     return AmountToken(value, currency, vnd_hint)
+
+
+# --- spoken and written-out amounts ----------------------------------------------------
+# Voice notes (and some typing) say "50 nghìn", "1 triệu 2", "12 dollars". Rewrite them into the
+# compact forms the parser already knows ("50k", "1200k", "12 sgd") before parsing.
+
+_THOUSAND = r"(?:nghìn|nghin|ngàn|ngan)"
+_MILLION_RE = re.compile(
+    r"(\d+)(?:[.,](\d{1,3}))?\s*(?:triệu|trieu|củ)(?!\w)"
+    r"(?:\s*(\d{1,3})\s*(?:" + _THOUSAND + r"|k)(?!\w)"         # 1 triệu 200 nghìn
+    r"|\s+(rưỡi|ruoi)(?!\w)"                                     # 1 triệu rưỡi
+    r"|\s+(\d{1,3})(?![\d.,]|\s*(?:" + _THOUSAND + r"|k|triệu|trieu)(?!\w)))?",  # 1 triệu 2
+    re.IGNORECASE)
+
+
+def _million(m: re.Match) -> str:
+    thousands = int(m[1]) * 1000
+    if m[2]:                      # 1,2 triệu / 1.25 triệu
+        thousands += int(m[2].ljust(3, "0"))
+    elif m[3]:                    # 1 triệu 200 nghìn
+        thousands += int(m[3])
+    elif m[4]:                    # rưỡi = half
+        thousands += 500
+    elif m[5]:                    # 1 triệu 2 = 1.2m, 2 triệu 25 = 2.25m, 2 triệu 250 = 2.25m
+        thousands += int(m[5]) * (100, 10, 1)[len(m[5]) - 1]
+    return f"{thousands}k"
+
+
+_SPOKEN = [
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*" + _THOUSAND + r"(?!\w)", re.I), r"\1k"),
+    # "50k đồng": the k already says VND; a trailing currency word would only confuse the parser
+    (re.compile(r"(\d+(?:[.,]\d+)?k)\s*(?:đồng|dong|vnđ|vnd|đ)(?!\w)", re.I), r"\1"),
+    (re.compile(r"(\d+)\s*dollars?\s*(?:and\s*)?(\d{1,2})\s*cents?(?!\w)", re.I), r"\1.\2 sgd"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:us|u\.s\.|american)\s*dollars?(?!\w)", re.I), r"\1 usd"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:đô mỹ|do my)(?!\w)", re.I), r"\1 usd"),
+    (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:singapore dollars?|dollars?|bucks|đô la|đô|do la)(?!\w)", re.I), r"\1 sgd"),
+    (re.compile(r"(\d+)\s*cents?(?!\w)", re.I), lambda m: f"{int(m[1]) / 100:.2f} sgd"),
+]
+
+
+def normalize_spoken(text: str) -> str:
+    out = _MILLION_RE.sub(_million, text)
+    for pattern, repl in _SPOKEN:
+        out = pattern.sub(repl, out)
+    return re.sub(r"[.!?…]+\s*$", "", out.strip())  # dictation adds a full stop at the end

@@ -37,6 +37,12 @@ class Settings:
     vision_model: str = field(default_factory=lambda: os.getenv("VISION_MODEL", "claude-haiku-4-5"))
     # A photo entry at or above this (home currency) is checked with you before logging.
     photo_confirm_above: float = field(default_factory=lambda: float(os.getenv("PHOTO_CONFIRM_ABOVE", "500")))
+    # Voice notes: Groq Whisper. No key = voice is off.
+    groq_api_key: str = field(default_factory=lambda: os.getenv("GROQ_API_KEY", ""))
+    stt_model: str = field(default_factory=lambda: os.getenv("STT_MODEL", "whisper-large-v3"))
+    stt_price_per_hour: float = field(default_factory=lambda: float(os.getenv("STT_PRICE_PER_HOUR", "0.111")))
+    voice_max_seconds: int = field(default_factory=lambda: int(os.getenv("VOICE_MAX_SECONDS", "120")))
+    voice_max_bytes: int = 20 * 1024 * 1024
     llm_daily_call_cap: int = field(default_factory=lambda: int(os.getenv("LLM_DAILY_CALL_CAP", "300")))
     # US$ per million tokens, used to estimate the cost of each call.
     llm_input_price: float = field(default_factory=lambda: float(os.getenv("LLM_INPUT_PRICE_PER_MTOK", "1.0")))

@@ -20,7 +20,12 @@ def get_bot() -> Bot:
         import anthropic
 
         llm = anthropic.Anthropic(api_key=s.anthropic_api_key, timeout=20.0, max_retries=1)
-    return Bot(s, TelegramAPI(s.telegram_bot_token), llm)
+    stt = None
+    if s.groq_api_key:
+        from .speech import groq_transcriber
+
+        stt = groq_transcriber(s.groq_api_key, s.stt_model)
+    return Bot(s, TelegramAPI(s.telegram_bot_token), llm, stt=stt)
 
 
 def handle_update(update: dict) -> None:

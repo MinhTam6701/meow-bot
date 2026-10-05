@@ -21,7 +21,7 @@ from .cards import (category_picker, language_keyboard, pause_keyboard, persona_
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
 from .models import CategoryInfo, Entry, ParseContext, WalletInfo
-from .money import CURRENCY_ALIASES, fmt, parse_amount_token, to_minor
+from .money import CURRENCY_ALIASES, fmt, normalize_spoken, parse_amount_token, to_minor
 from .parser import has_amount, parse_message
 from .parser_llm import cost_usd
 from .parser_rules import parse_with_rules
@@ -96,13 +96,15 @@ WALLET_TYPES = {"cash", "bank", "ewallet", "credit"}
 class Bot(PhotoFlow):
     def __init__(self, settings: Settings, tg: TelegramAPI, llm_client: Any = None,
                  clock: Optional[Callable[[], datetime]] = None,
-                 fx_fetch: Optional[fx.Fetcher] = None, rng: Optional[random.Random] = None):
+                 fx_fetch: Optional[fx.Fetcher] = None, rng: Optional[random.Random] = None,
+                 stt: Optional[Callable] = None):
         self.s = settings
         self.tg = tg
         self.llm = llm_client
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.fx_fetch = fx_fetch or fx.fetch_open_er_api
         self.rng = rng or random.Random()
+        self.stt = stt  # voice notes -> text (Groq Whisper); None = voice is off
 
     # ------------------------------------------------------------------ entry points
     def process_update(self, conn, update: dict) -> None:
@@ -142,6 +144,12 @@ class Bot(PhotoFlow):
                                        self.s.home_currency, self.s.default_timezone)
         if created:
             user = db.get_user(conn, sender["id"])  # pick up column defaults
+        voice = msg.get("voice") or msg.get("audio")
+        if voice:
+            if user.get("awaiting"):
+                db.set_awaiting(conn, user["telegram_id"], None)
+            self.on_voice(conn, user, chat["id"], voice)
+            return
         image = image_of(msg)
         if image:
             if user.get("awaiting"):
@@ -150,7 +158,7 @@ class Bot(PhotoFlow):
             return
         text = (msg.get("text") or "").strip()
         if not text:
-            self.tg.send_message(chat["id"], "I can read text and photos of receipts or payment screenshots 🐾")
+            self.tg.send_message(chat["id"], "I can read text, voice notes, and photos of receipts or payment screenshots 🐾")
             return
 
         if user.get("awaiting") and not text.startswith("/"):
@@ -171,20 +179,54 @@ class Bot(PhotoFlow):
 
         self.log_money(conn, user, chat["id"], text)
 
+    def on_voice(self, conn, user: dict, chat_id: int, voice: dict) -> None:
+        uid = user["telegram_id"]
+        if self.stt is None:
+            self.tg.send_message(chat_id, "Voice notes aren't set up yet (no speech-to-text key). Type it instead 🐾")
+            return
+        if (voice.get("duration") or 0) > self.s.voice_max_seconds:
+            self.tg.send_message(chat_id, f"That's a long one! Keep voice notes under {self.s.voice_max_seconds} seconds, "
+                                          "e.g. “lunch 12 dollars, grab 15”.")
+            return
+        if db.llm_calls_since(conn, uid, self.clock() - timedelta(days=1)) >= self.s.llm_daily_call_cap:
+            self.tg.send_message(chat_id, "I've hit today's AI limit, so I can't listen right now. Type it instead 🐾")
+            return
+        self.tg.send_chat_action(chat_id, "typing")
+        audio = self.tg.download_file(voice["file_id"], max_bytes=self.s.voice_max_bytes)
+        ext = {"audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
+               "audio/wav": "wav", "audio/webm": "webm"}.get(voice.get("mime_type") or "audio/ogg", "ogg")
+        text, call = self.stt(audio, f"voice.{ext}")
+        seconds = max(voice.get("duration") or 0, 10)  # Groq bills at least 10 seconds per request
+        db.log_llm_call(conn, uid, "voice", call, seconds / 3600 * self.s.stt_price_per_hour if call.ok else None)
+        if text is None:
+            self.tg.send_message(chat_id, "😿 I couldn't process that voice note. Try again, or type it.")
+            return
+        if not text.strip():
+            self.tg.send_message(chat_id, "🎙 I couldn't hear anything in that one. Try again a bit closer to the mic?")
+            return
+        self.log_money(conn, user, chat_id, text, source="voice", heard=text)
+
     def context(self, conn, user: dict, today: date) -> ParseContext:
         uid = user["telegram_id"]
         return ParseContext(today=today, home_currency=user["home_currency"],
                             wallets=db.wallets(conn, uid), categories=db.categories(conn, uid),
                             merchant_rules=db.active_rules(conn, uid), taught=db.taught_keywords(conn, uid))
 
-    def log_money(self, conn, user: dict, chat_id: int, text: str) -> None:
+    def log_money(self, conn, user: dict, chat_id: int, text: str, source: str = "text",
+                  heard: Optional[str] = None) -> None:
+        """`heard` is a voice transcript: shown with every reply so a mishearing is easy to spot."""
         uid = user["telegram_id"]
         today = self.today_for(user)
         ctx = self.context(conn, user, today)
+        said, text = text, normalize_spoken(text)  # "50 nghìn" -> "50k", "1 triệu 2" -> "1200k"
+        prefix = f"🎙 <i>“{escape(heard, quote=False)}”</i>\n\n" if heard else ""
+
+        def reply(message: str) -> None:
+            self.tg.send_message(chat_id, prefix + message)
 
         transfer = parse_transfer(text, ctx)
         if isinstance(transfer, str):
-            self.tg.send_message(chat_id, transfer)
+            reply(transfer)
             return
         if isinstance(transfer, TransferRequest):
             db.set_pending(conn, uid, None)
@@ -204,12 +246,12 @@ class Bot(PhotoFlow):
             to_parse = f"{pending}\n\nAnswer to your question: {text}"
 
         if not pending and not has_amount(text) and self.recent_reaction(user):
-            self.chat_back(conn, user, chat_id, text)
+            self.chat_back(conn, user, chat_id, said)
             return
 
         if not has_amount(to_parse):
             db.set_pending(conn, uid, None)
-            self.tg.send_message(chat_id, "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
+            reply("I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help.")
             return
 
         llm_logs = []
@@ -224,10 +266,11 @@ class Bot(PhotoFlow):
 
         if not result.entries:
             db.set_pending(conn, uid, to_parse if result.parser == "llm" else None)
-            self.tg.send_message(chat_id, escape(result.question or "I couldn't read that. Try /help."))
+            reply(escape(result.question or "I couldn't read that. Try /help."))
             return
         db.set_pending(conn, uid, None)
-        self.save_entries(conn, user, chat_id, ctx, result.entries, to_parse, parser=result.parser)
+        self.save_entries(conn, user, chat_id, ctx, result.entries, to_parse, parser=result.parser, source=source,
+                          extra_note=f"🎙 “{heard}”" if heard else None)
 
     def day_total_entry(self, user: dict, text: str, today: date) -> Optional[Entry]:
         """After a reminder, a bare number ("45") is the day's total."""

@@ -124,6 +124,8 @@ entries saved while rates were unavailable, and sends due check-ins. Every step 
 |---|---|
 | Photo logging | Send a receipt, a bank-app screenshot, a card notification or a Shopee order. Claude Haiku reads the amount actually paid, the date, the bank and who was paid. Clear ones are logged straight away (📸 on the card). |
 | Checked first | Buttons instead of logging when: the same amount is already logged within a day (a week if the photo has no date); money went to a person (Spending / My own account / Don't log); it went to your own name (`/myname`), which is recorded as a move between wallets; or it's over `PHOTO_CONFIRM_ABOVE` (default S$500). |
+| Voice notes | Send a voice note in English, Vietnamese or both (“ăn trưa 50 nghìn, grab 12 dollars”). Groq Whisper (`GROQ_API_KEY`, model `STT_MODEL`) turns it into text, shown on the card as 🎙 “…”, then it's parsed like a typed message. Up to `VOICE_MAX_SECONDS` (120). |
+| Spoken amounts | “50 nghìn” = 50k, “1 triệu 2” = 1.2 million VND, “12 dollars 50 cents” = S$12.50, “5 US dollars” = US$5. Works for typed messages too. |
 | Privacy | Photos are not stored. Account, card and phone numbers and reference codes are removed before anything is saved or logged. |
 | Try it | `python scripts/try_photo.py private/your_screenshot.jpg` shows what Claude reads, without saving. |
 
