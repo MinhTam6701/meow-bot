@@ -61,8 +61,9 @@ def rising_categories(weekly: list[dict[str, int]], home: str) -> list[Insight]:
     return out
 
 
-def budget_pace(spent: int, limit: int, today: date, name: str, home: str) -> Optional[Insight]:
-    """'At this pace you'll hit your Shopping budget on the 22nd.'"""
+def budget_pace(spent: int, limit: int, today: date, name: str, home: str, fixed: int = 0) -> Optional[Insight]:
+    """'At this pace you'll hit your Shopping budget on the 22nd.' `fixed` (rent, bills) counts once,
+    not as a daily rate: S$800 rent on the 1st doesn't mean S$800 more every day."""
     first = today.replace(day=1)
     days_in_month = ((first + timedelta(days=32)).replace(day=1) - first).days
     elapsed = today.day
@@ -70,8 +71,10 @@ def budget_pace(spent: int, limit: int, today: date, name: str, home: str) -> Op
         return None
     if spent >= limit:
         return Insight(f"🚨 <b>{escape(name)}</b> is already over budget: {fmt(spent, home)} of {fmt(limit, home)}.", 250)
-    per_day = spent / elapsed
-    hit_day = math.ceil(limit / per_day)
+    per_day = (spent - fixed) / elapsed
+    if per_day <= 0:
+        return None
+    hit_day = math.ceil((limit - fixed) / per_day)
     if hit_day > days_in_month:
         return None
     hit = first + timedelta(days=hit_day - 1)
@@ -105,13 +108,18 @@ def find(conn, user: dict, today: date) -> list[Insight]:
     first = today.replace(day=1)
     nxt = (first + timedelta(days=32)).replace(day=1)
     spent_by_cat = db.month_spent_home(conn, uid, first, nxt)
+    everyday_month = db.everyday_spent(conn, uid, first, nxt)
     for b in db.budgets(conn, uid):
-        p = budget_pace(spent_by_cat.get(b["category_id"], 0), b["limit_minor"], today, b["name"] or "Total", home)
+        if b["name"] in db.FIXED_CATEGORIES:
+            continue  # rent and bills don't have a "pace"
+        spent = spent_by_cat.get(b["category_id"], 0)
+        fixed = max(spent - everyday_month, 0) if b["category_id"] is None else 0
+        p = budget_pace(spent, b["limit_minor"], today, b["name"] or "Total", home, fixed)
         if p:
             found.append(p)
     everyday = user.get("everyday_budget_minor")
     if everyday:
-        p = budget_pace(db.everyday_spent(conn, uid, first, nxt), everyday, today, "everyday", home)
+        p = budget_pace(everyday_month, everyday, today, "everyday", home)
         if p:
             found.append(p)
     found.sort(key=lambda i: -i.weight)
@@ -119,27 +127,35 @@ def find(conn, user: dict, today: date) -> list[Insight]:
 
 
 def recap(conn, user: dict, today: date) -> tuple[str, list[str]]:
-    """The Sunday recap for the week ending today: (HTML body, plain facts for the persona line)."""
+    """The recap for the week up to today: (HTML body, plain facts for the persona line).
+    On Sunday that's the whole week; earlier it's the week so far, compared with the same days last week."""
     uid, home = user["telegram_id"], user["home_currency"]
     start = week_start(today)
-    end = start + timedelta(days=7)
+    end = today + timedelta(days=1)          # up to and including today
+    n_days = (end - start).days
+    full = n_days == 7
     this_week = db.daily_spend(conn, uid, start, end, everyday=False)
     everyday = db.daily_spend(conn, uid, start, end)
     total, every = sum(this_week.values()), sum(everyday.values())
-    prev = sum(db.daily_spend(conn, uid, start - timedelta(days=7), start, everyday=False).values())
+    prev = sum(db.daily_spend(conn, uid, start - timedelta(days=7), end - timedelta(days=7), everyday=False).values())
     avg4 = sum(db.daily_spend(conn, uid, start - timedelta(days=28), start, everyday=False).values()) // 4
 
-    lines = [f"🗓 <b>Your week</b> · {start.strftime('%d %b')} – {(end - timedelta(days=1)).strftime('%d %b')}", ""]
+    span = (f"{start.strftime('%a %d %b')}" if n_days == 1 else f"{start.strftime('%d %b')} – {today.strftime('%d %b')}")
+    lines = [f"🗓 <b>Your week{'' if full else ' so far'}</b> · {span}"
+             + ("" if full else f" ({n_days} of 7 days)"), ""]
     change = ""
+    same = "last week" if full else ("last " + start.strftime("%A") if n_days == 1 else "the same days last week")
     if prev:
         pct = round((total - prev) * 100 / prev)
-        change = f" ({'+' if pct >= 0 else ''}{pct}% vs last week)"
+        change = f" ({'+' if pct >= 0 else ''}{pct}% vs {same})"
     lines.append(f"💸 Spent <b>{fmt(total, home)}</b>{change}")
     if every != total:
         lines.append(f"🛒 Everyday spending {fmt(every, home)} (without rent, bills and study)")
     if avg4:
         lines.append(f"📊 Your 4-week average is {fmt(avg4, home)} a week")
-    facts = [f"Spent {fmt(total, home)} this week{change}; 4-week average {fmt(avg4, home)}."]
+    facts = [("The whole week is done. " if full else
+              f"The week has only just started: this covers {n_days} of 7 days, so don't judge the week's total. ")
+             + f"Spent {fmt(total, home)}{change}; a normal full week is about {fmt(avg4, home)}."]
 
     rows = [r for r in db.month_by_category_home(conn, uid, start, end) if r["type"] == "expense" and r["total"]]
     rows.sort(key=lambda r: r["total"])
@@ -149,10 +165,10 @@ def recap(conn, user: dict, today: date) -> tuple[str, list[str]]:
         facts.append("Top: " + ", ".join(f"{r['category']} {fmt(-r['total'], home)}" for r in rows[:3]) + ".")
 
     days_logged = len([d for d in db.logged_days(conn, uid, start) if d < end])
-    good = [h for h in db.mochi_history(conn, uid, 7)
-            if start <= h["day"] < end and h["result"] in ("no_spend", "half", "within")]
-    lines += ["", f"📅 Logged on {days_logged} of 7 days"
-              + (f" · Mochi had {len(good)} good days" if user.get("everyday_budget_minor") else "")]
+    scored = [h for h in db.mochi_history(conn, uid, 7) if start <= h["day"] < end]
+    good = [h for h in scored if h["result"] in ("no_spend", "half", "within")]
+    lines += ["", f"📅 Logged on {days_logged} of {n_days} day{'s' if n_days > 1 else ''}"
+              + (f" · Mochi had {len(good)} good day{'s' if len(good) != 1 else ''} of {len(scored)}" if scored else "")]
 
     found = find(conn, user, today)
     if found:

@@ -163,3 +163,66 @@ def test_upcoming_renewals_in_the_recap(env):
     env.press("pers:plain", env.say("/persona").id)
     msg = env.say("/recap")
     assert "Subscriptions renewing this week" in msg.text and "Netflix S$17.98 on Thu 01 Oct" in msg.text
+
+
+
+# --- found in real use (5 Oct) ---------------------------------------------------------
+
+def test_statements_about_spending_are_questions():
+    assert ask.is_question("my housing spending last month", chatting=True)    # was answered as chat
+    assert ask.is_question("housing last month")
+    assert not ask.is_question("what do you mean?", chatting=True)
+    assert not ask.is_question("lunch and dinner") and not ask.is_question("kopi")
+
+
+def test_rent_counts_once_in_the_budget_pace():
+    # 5 Oct: S$1,076.58 spent of which S$800 rent; the rest is S$276.58 over 5 days = S$55.32 a day
+    i = insights.budget_pace(107658, 160000, date(2026, 10, 5), "Total", "SGD", fixed=80000)
+    assert "on the <b>15th</b>" in i.text          # not the 8th
+    assert insights.budget_pace(80000, 160000, date(2026, 10, 5), "Total", "SGD", fixed=80000) is None
+
+
+def test_one_total_for_two_meals_stays_one_entry(env):
+    env.say("/start")
+    env.llm.queue.append({"entries": [], "question": "What did you spend 18.77 SGD on today?"})
+    env.say("total today 18.77")
+    env.llm.queue.append({"entries": [
+        {"amount": "9.39", "currency": "SGD", "type": "expense", "category": "Food & Drinks", "description": "lunch", "date": "2026-09-29"},
+        {"amount": "9.39", "currency": "SGD", "type": "expense", "category": "Food & Drinks", "description": "dinner", "date": "2026-09-29"}]})
+    card = env.say("lunch and dinner")
+    assert "lunch and dinner — <b>S$18.77</b>" in card.text and "Logged 2" not in card.text
+    assert "Never divide an amount yourself" in env.llm.calls[-1]["system"]
+
+
+def test_answer_with_its_own_amounts_is_kept(env):
+    env.say("/start")
+    env.llm.queue.append({"entries": [], "question": "What was 18.77 for?"})
+    env.say("total today 18.77")
+    env.llm.queue.append({"entries": [
+        {"amount": "8", "currency": "SGD", "type": "expense", "category": "Food & Drinks", "description": "lunch", "date": "2026-09-29"},
+        {"amount": "10.77", "currency": "SGD", "type": "expense", "category": "Food & Drinks", "description": "dinner", "date": "2026-09-29"}]})
+    assert "Logged 2 entries" in env.say("lunch 8 dinner 10.77").text
+
+
+def test_recap_early_in_the_week_compares_the_same_days(env):
+    env.say("/start")
+    env.clock.now = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)   # Mon 5 Oct, 17:00
+    env.say("lunch 27.75")
+    env.say("lunch 900")
+    env.conn.execute("update transactions set occurred_on = '2026-09-30' where amount_minor = -90000")  # last Wed
+    env.llm.replies.append("Good start.")
+    env.say("/recap")
+    recap = env.tg.reactions[-1]  # carries the persona line, so the fake files it with reactions
+    assert "Your week so far</b> · Mon 05 Oct (1 of 7 days)" in recap
+    assert "vs last Monday" not in recap               # nothing last Monday: no misleading -97%
+    assert "Logged on 1 of 1 day" in recap and "Mochi had" not in recap
+    assert "only just started" in env.llm.chats[-1]["messages"][-1]["content"]
+
+
+def test_pinned_message_follows_each_entry(env):
+    env.say("/start")
+    env.say("/budget everyday 600")
+    env.conn.execute("update mochi_state set pinned_message_id = 777")
+    env.say("kopi 2")
+    pin = [e for e in env.tg.edits if e.message_id == 777]
+    assert pin and "Mochi" in pin[-1].text and "Updated Tue 29 Sep, 22:30" in pin[-1].text

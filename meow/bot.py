@@ -102,6 +102,24 @@ TOTAL_WORDS = {"total", "all", "month", "overall", "tong"}
 WALLET_TYPES = {"cash", "bank", "ewallet", "credit"}
 
 
+def merge_invented_split(entries: list[Entry], pending: str, answer: str) -> list[Entry]:
+    """The bot asked "what was 18.77 for?" and the answer named several things: keep ONE entry with the
+    amount the user gave. Claude must not divide it (18.77 became 9.39 + 9.39 = 18.78)."""
+    if len(entries) < 2 or re.search(r"\d", answer):
+        return entries  # the answer brought its own amounts ("lunch 8, dinner 10.77")
+    amounts = [t for t in (parse_amount_token(w) for w in re.findall(r"[^\s,;]+", pending)) if t]
+    if len(amounts) != 1:
+        return entries
+    given = amounts[0].value
+    if len({e.currency for e in entries}) != 1 or len({e.type for e in entries}) != 1:
+        return entries
+    total = sum(e.amount for e in entries)
+    if abs(total - given) > max(Decimal("0.05"), given * Decimal("0.01")):
+        return entries
+    first = entries[0]
+    return [first.model_copy(update={"amount": given, "description": " and ".join(e.description for e in entries)[:200]})]
+
+
 class Bot(PhotoFlow, SubscriptionFlow):
     def __init__(self, settings: Settings, tg: TelegramAPI, llm_client: Any = None,
                  clock: Optional[Callable[[], datetime]] = None,
@@ -286,6 +304,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
             reply(escape(result.question or "I couldn't read that. Try /help."))
             return
         db.set_pending(conn, uid, None)
+        if pending and to_parse != text:
+            result.entries = merge_invented_split(result.entries, pending, text)
         self.save_entries(conn, user, chat_id, ctx, result.entries, to_parse, parser=result.parser, source=source,
                           extra_note=f"🎙 “{heard}”" if heard else None)
 
@@ -341,6 +361,14 @@ class Bot(PhotoFlow, SubscriptionFlow):
             self.react(conn, user, chat_id, batch, rows, today, reached)
         except Exception:  # the entry is saved; a missing comment must never undo it
             log.exception("persona reaction failed")
+        self.update_pinned_quietly(conn, user)
+
+    def update_pinned_quietly(self, conn, user: dict) -> None:
+        """Keep the pinned Mochi line in step with what was just logged or undone (edit only)."""
+        try:
+            self.refresh_pinned(conn, user, self.today_for(user), create=False)
+        except Exception:
+            log.exception("pinned update failed")
 
     def footer(self, conn, user: dict, today: date) -> str:
         spent, missing = db.spent_on_home(conn, user["telegram_id"], today)
@@ -383,20 +411,24 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 + (f"\nAccessory: {streaks.accessory(st.current)}" if streaks.accessory(st.current) else "")
                 + ("" if state["weight"] < 90 else "\n👑 Chonky King!"))
 
-    def refresh_pinned(self, conn, user: dict, today: date) -> None:
+    def refresh_pinned(self, conn, user: dict, today: date, create: bool = True) -> None:
         """Keep one pinned message with Mochi's status at the top of the chat."""
         uid = user["telegram_id"]
         state = db.mochi_state(conn, uid)
         line = self.mochi_line(conn, user, today)
         if not state or not line:
             return
-        text = f"📌 {line}\n<i>Updated {today.strftime('%a %d %b')}</i>"
+        local = self.clock().astimezone(ZoneInfo(user["timezone"]))
+        stamp = local.strftime("%a %d %b, %H:%M") if local.date() == today else today.strftime("%a %d %b")
+        text = f"📌 {line}\n<i>Updated {stamp}</i>"
         if state["pinned_message_id"]:
             try:
                 self.tg.edit_message_text(uid, state["pinned_message_id"], text, None)
                 return
             except Exception:
                 log.info("pinned message gone, sending a new one")
+        if not create:
+            return
         sent = self.tg.send_message(uid, text, silent=True)
         if sent:
             try:
@@ -1385,6 +1417,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 elif action == "undo":
                     db.undo_batch(conn, uid, batch_id)
                     self.refresh_card(conn, uid, batch_id, chat_id, message_id)
+                    self.update_pinned_quietly(conn, db.get_user(conn, uid))
                     note = "Undone"
                 else:
                     self.refresh_card(conn, uid, batch_id, chat_id, message_id)

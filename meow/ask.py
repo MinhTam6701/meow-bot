@@ -37,16 +37,23 @@ _ABOUT_DATA = re.compile(
     r"september|october|november|december)\b", re.IGNORECASE)
 
 
+_SPENDING = re.compile(r"\b(spen[dt]|spending|cost|costs|paid|tiêu|tieu|chi tiêu|chi tieu|hết bao|het bao)\b", re.IGNORECASE)
+
+
 def is_question(text: str, chatting: bool = False) -> bool:
-    """A question about past spending, not an entry. "lunch 12?" is still an entry."""
+    """A question about past spending, not an entry. "lunch 12?" is still an entry, and right after the
+    persona spoke, "what do you mean?" is chat. Statements count too: "my housing spending last month"."""
     t = text.strip()
-    if chatting and not _ABOUT_DATA.search(t):
-        return False
+    about_data = bool(_ABOUT_DATA.search(t))
     if _STRONG.search(t):
-        return True
+        return about_data or not chatting
     if re.search(r"\d", t):
         return False
-    return bool(_WEAK.match(t)) or t.endswith("?")
+    asked = bool(_WEAK.match(t)) or t.endswith("?") or bool(_SPENDING.search(t))
+    if chatting:
+        return about_data and asked
+    # No amount, so it can't be an entry anyway: anything about your data is worth looking up.
+    return asked or about_data
 
 
 class Query(BaseModel):

@@ -87,6 +87,10 @@ Other rules:
 - Pick the closest category; use 'Other' or 'Other income' only if nothing fits.
 - Keep descriptions short and in the user's own words.
 - Only ask a question if the amount itself is missing or unreadable, or you truly cannot tell whether money came in or went out.
+- Never divide an amount yourself. One amount for several things ("lunch and dinner" for 18.77) is ONE entry with that
+  exact amount and a combined description ("lunch and dinner"). Only make several entries when the user gives several amounts.
+- A day total without details ("total today 18.77", "hôm nay tiêu 50k") is one entry described as "Day total"
+  in Other. Don't ask what it was for.
 - Never ask about the currency: the currency rules above always decide it. Never ask about category, wallet, or timing.
 - A message that mentions a purchase and an amount is something already paid, unless it clearly says it is planned.
 - Gifts, treats or payments for other people are expenses.
