@@ -48,11 +48,16 @@ def test_mochi_command_sends_her_picture_and_reuses_the_upload(env):
     assert env.say("/mochi").photo == "skinny.jpg"
 
 
-def test_away_at_grandmas_is_text_only(env):
+def test_away_at_grandmas_shows_the_empty_cushion(env):
     setup(env, 0)
     env.conn.execute("update mochi_state set away = true")
     msg = env.say("/mochi")
-    assert not hasattr(msg, "photo") and "Mochi" in msg.text
+    assert msg.photo == "away.jpg" and "Mochi" in msg.text
+
+
+def test_all_art_is_in_place():
+    for name in ("skinny", "neutral", "fat", "king", "sad", "sleeping", "away"):
+        assert (mochi.ART_DIR / f"{name}.jpg").stat().st_size > 10_000, name
 
 
 def test_picture_failure_falls_back_to_text(env):
