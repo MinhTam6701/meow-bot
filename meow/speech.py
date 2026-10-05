@@ -12,20 +12,26 @@ GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 # A hint of the words people say when logging money; Whisper uses it to pick spellings.
 PROMPT = "phở 65 nghìn, grab 12 dollars, cà phê 30 nghìn, lunch 14, tiền nhà 2 triệu, kopi, hawker, Shopee."
 
-Transcriber = Callable[[bytes, str], tuple[Optional[str], LLMCallLog]]
+Transcriber = Callable[..., tuple[Optional[str], LLMCallLog]]
+
+
+def build_prompt(wallet_words: list[str]) -> str:
+    """Whisper copies the spelling of words in the prompt, so list the user's banks and wallets."""
+    words = list(dict.fromkeys(w for w in wallet_words if w))[:20]
+    return PROMPT + (" Trả bằng " + ", ".join(words) + "." if words else "")
 
 
 def groq_transcriber(api_key: str, model: str = "whisper-large-v3", timeout: float = 30.0) -> Transcriber:
     http = httpx.Client(timeout=timeout)
 
-    def transcribe(audio: bytes, filename: str) -> tuple[Optional[str], LLMCallLog]:
+    def transcribe(audio: bytes, filename: str, prompt: str = PROMPT) -> tuple[Optional[str], LLMCallLog]:
         log = LLMCallLog(model=model, input_tokens=None, output_tokens=None, latency_ms=0, ok=False,
                          input_text=f"[voice {len(audio) // 1024} KB]", output_json=None)
         start = time.monotonic()
         try:
             resp = http.post(GROQ_URL, headers={"Authorization": f"Bearer {api_key}"},
                              files={"file": (filename, audio)},
-                             data={"model": model, "prompt": PROMPT, "response_format": "json", "temperature": "0"})
+                             data={"model": model, "prompt": prompt, "response_format": "json", "temperature": "0"})
             if resp.status_code != 200:
                 log.error = f"HTTP {resp.status_code}: {resp.text[:300]}"
                 return None, log

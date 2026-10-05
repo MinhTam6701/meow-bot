@@ -16,7 +16,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import db, fx, mochi, persona_llm, report, streak as streaks
+from . import db, fx, mochi, persona_llm, report, speech, streak as streaks
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
@@ -195,7 +195,10 @@ class Bot(PhotoFlow):
         audio = self.tg.download_file(voice["file_id"], max_bytes=self.s.voice_max_bytes)
         ext = {"audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
                "audio/wav": "wav", "audio/webm": "webm"}.get(voice.get("mime_type") or "audio/ogg", "ogg")
-        text, call = self.stt(audio, f"voice.{ext}")
+        wallets = db.wallets(conn, uid)
+        hint = speech.build_prompt([w.name for w in wallets] + [a for w in wallets for a in w.aliases
+                                                                if a.isascii() and len(a) > 2])
+        text, call = self.stt(audio, f"voice.{ext}", prompt=hint)
         seconds = max(voice.get("duration") or 0, 10)  # Groq bills at least 10 seconds per request
         db.log_llm_call(conn, uid, "voice", call, seconds / 3600 * self.s.stt_price_per_hour if call.ok else None)
         if text is None:

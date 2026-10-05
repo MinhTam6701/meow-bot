@@ -14,8 +14,9 @@ class FakeSTT:
     def __init__(self):
         self.heard, self.calls, self.fail = [], [], False
 
-    def __call__(self, audio: bytes, filename: str):
+    def __call__(self, audio: bytes, filename: str, prompt: str = ""):
         self.calls.append(filename)
+        self.prompts = getattr(self, "prompts", []) + [prompt]
         log = LLMCallLog(model="whisper-large-v3", input_tokens=None, output_tokens=None, latency_ms=300,
                          ok=not self.fail, input_text="[voice]", output_json=None)
         if self.fail:
@@ -67,6 +68,15 @@ def test_voice_transfer(venv):
     voice(venv, "chuyển 2 triệu từ VP sang cash")
     rows = venv.conn.execute("select amount_minor, currency from transactions order by id").fetchall()
     assert [r["amount_minor"] for r in rows] == [-2000000, 2000000]
+
+
+def test_bank_name_after_a_comma_picks_the_wallet(venv):
+    """The real case: Whisper writes "Game 33 nghìn, Vietcombank." with a comma before the bank."""
+    venv.conn.execute("insert into wallets (user_id, name, type, currency, aliases) "
+                      "values (%s, 'VCB', 'bank', 'VND', '{vietcombank}')", (ME,))
+    card = voice(venv, "Game 33 nghìn, Vietcombank.")
+    assert "33,000₫" in card.text and "VCB" in card.text and venv.llm.calls == []
+    assert "VCB" in venv.bot.stt.prompts[-1] and "vietcombank" in venv.bot.stt.prompts[-1]
 
 
 def test_too_long(venv):

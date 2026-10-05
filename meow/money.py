@@ -154,6 +154,7 @@ _SPOKEN = [
     (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:đô mỹ|do my)(?!\w)", re.I), r"\1 usd"),
     (re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:singapore dollars?|dollars?|bucks|đô la|đô|do la)(?!\w)", re.I), r"\1 sgd"),
     (re.compile(r"(\d+)\s*cents?(?!\w)", re.I), lambda m: f"{int(m[1]) / 100:.2f} sgd"),
+    (re.compile(r"(?<!\w)(?:trả|tra)\s+(bằng|bang|qua)(?!\w)", re.I), r"\1"),  # "trả bằng VCB" = "bằng VCB"
 ]
 
 

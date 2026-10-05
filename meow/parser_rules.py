@@ -224,8 +224,27 @@ def _after_month(words: list[str], j: int) -> bool:
     return j > 0 and normalize(words[j - 1]) in MONTH_WORDS and bool(re.fullmatch(r"\d{1,2}([./]\d{2,4})?", words[j]))
 
 
+# Words around a wallet name: "trả bằng VCB", "with DBS", "qua Vietcombank".
+WALLET_LINK_WORDS = {"bang", "with", "by", "from", "qua", "tra", "via", "using", "tu", "the", "card", "paid", "pay"}
+
+
+def _wallet_only(segment: str, ctx: ParseContext) -> Optional[str]:
+    """The wallet name in a piece with no amount, e.g. the "Vietcombank" in "game 33k, Vietcombank"."""
+    if re.search(r"\d", segment):
+        return None
+    words = [w for w in re.findall(r"[^\W\d_]+", segment) if normalize(w) not in WALLET_LINK_WORDS]
+    name = " ".join(words)
+    return name if words and ctx.wallet_by_name(name) is not None else None
+
+
 def parse_with_rules(text: str, ctx: ParseContext) -> Optional[list[Entry]]:
-    segments = [s.strip() for s in SPLIT_RE.split(text) if s and s.strip()]
+    segments: list[str] = []
+    for seg in (s.strip() for s in SPLIT_RE.split(text) if s and s.strip()):
+        wallet = _wallet_only(seg, ctx) if segments else None
+        if wallet:
+            segments[-1] += " " + wallet   # dictation puts a comma before the bank name
+        else:
+            segments.append(seg)
     if not segments or len(segments) > 20:
         return None
     entries = []
