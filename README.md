@@ -37,7 +37,7 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 |---|---|
 | `pho 65k`, `grab 12.5 yesterday`, `coffee 6, lunch 14` | Rules read it instantly; Claude only when the rules aren't sure |
 | `salary 4200 to DBS`, `+50 refund` | Income |
-| `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr` | Transfer between wallets (not spending) |
+| `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr` | Transfer between wallets (not spending). Also `transfer vp to dbs 30tr160k to 1471.2`; wording the rules miss goes to Claude, and a received amount far from today's rate is refused as a likely typo |
 | A voice note: “ăn trưa 50 nghìn, Vietcombank” | Transcribed (🎙 shown on the card), then read like text |
 | A receipt, bank-app screenshot, card notification or Shopee order | Read by Claude (📸 on the card); see [Photos](#photos) |
 | `45` right after the evening reminder | That day's total |
