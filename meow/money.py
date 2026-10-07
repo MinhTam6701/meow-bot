@@ -61,7 +61,7 @@ def fmt(minor: int, currency: str) -> str:
 # ---------------------------------------------------------------------------
 _PREFIX = r"(?P<pre>us\$|s\$|\$|€|£|¥)?"
 _NUM = r"(?P<num>\d{1,3}(?:\.\d{3})+|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:[.,]\d{1,2})?)"
-_MULT = r"(?P<mult>k|m|tr|triệu|trieu)?(?P<frac>\d{1,3})?"
+_MULT = r"(?P<mult>k|m|tr|triệu|trieu)?(?P<frac>\d{1,3})?(?P<k2>k)?"  # 30tr160k = 30,160,000
 _CUR = r"(?P<cur>sgd|vnd|vnđ|usd|eur|gbp|myr|thb|jpy|krw|idr|aud|đ|₫)?"
 AMOUNT_RE = re.compile(rf"^{_PREFIX}{_NUM}{_MULT}{_CUR}$", re.IGNORECASE)
 
@@ -90,6 +90,8 @@ def parse_amount_token(token: str) -> Optional[AmountToken]:
     num, mult, frac = m["num"], (m["mult"] or "").lower(), m["frac"]
     if frac and not mult:
         return None  # digits glued after digits, not a number we understand
+    if m["k2"] and (mult == "k" or not frac):
+        return None  # "5k3k" is not an amount
     vnd_hint = False
     if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", num):  # 65.000 -> Vietnamese thousands
         value = Decimal(num.replace(".", ""))
@@ -103,10 +105,13 @@ def parse_amount_token(token: str) -> Optional[AmountToken]:
         value *= 1000
         vnd_hint = True
     elif mult in ("m", "tr", "triệu", "trieu"):
-        # 1tr2 = 1.2 million
-        if frac:
-            value = value + Decimal(f"0.{frac}")
-        value *= 1_000_000
+        # 1tr2 = 1.2 million; 30tr160k = 30 million + 160 thousand
+        if frac and m["k2"]:
+            value = value * 1_000_000 + Decimal(frac) * 1000
+        else:
+            if frac:
+                value = value + Decimal(f"0.{frac}")
+            value *= 1_000_000
         vnd_hint = True
 
     currency = None

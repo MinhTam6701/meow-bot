@@ -31,7 +31,7 @@ from .photo_flow import PhotoFlow, image_of
 from .subs_flow import SubscriptionFlow
 from .personas import LANGUAGES, PERSONAS, ROAST_LABELS, line as persona_line
 from .telegram import TelegramAPI
-from .transfers import TransferRequest, parse_transfer
+from .transfers import TransferRequest, Unclear, parse_transfer, parse_transfer_llm
 
 log = logging.getLogger(__name__)
 
@@ -262,6 +262,14 @@ class Bot(PhotoFlow, SubscriptionFlow):
             return
 
         transfer = parse_transfer(text, ctx)
+        if isinstance(transfer, Unclear) and self.llm_ok(conn, uid):
+            # The rules couldn't read it ("30tr160k", odd word order): let Claude try before asking.
+            found, call = parse_transfer_llm(self.llm, self.s.anthropic_model, text, ctx)
+            db.log_llm_call(conn, uid, "transfer", call, cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
+            if isinstance(found, TransferRequest):
+                transfer = found
+            elif found:
+                transfer = escape(found) + "\n\nOr write it like <code>move 500 from DBS to VP as 10tr</code>"
         if isinstance(transfer, str):
             reply(transfer)
             return
@@ -732,6 +740,14 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 in_minor = out_minor
             elif t.received:
                 in_minor = to_minor(t.received[0], dst.currency)
+                market = self.fx_convert(conn, home, out_minor, src.currency, dst.currency, day)
+                if market and not (0.8 <= in_minor / market <= 1.25):
+                    # Way off today's rate: almost always a typo (an extra 000) or swapped amounts.
+                    self.tg.send_message(
+                        chat_id, f"⚠️ {fmt(out_minor, src.currency)} from {escape(src.name)} is about "
+                                 f"<b>{fmt(market, dst.currency)}</b> at today's rate, not {fmt(in_minor, dst.currency)}. "
+                                 "Nothing saved: check the amounts and send it again.")
+                    return
             else:
                 in_minor, estimated = self.fx_convert(conn, home, out_minor, src.currency, dst.currency, day), True
         elif cur == dst.currency:
