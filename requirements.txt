@@ -5,3 +5,4 @@ psycopg[binary]>=3.2
 pydantic>=2.7
 tzdata
 python-dotenv>=1.0
+Pillow>=10.1

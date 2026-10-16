@@ -44,7 +44,8 @@ class TelegramAPI:
         if isinstance(photo, str):
             return self.call("sendPhoto", photo=photo, **params)
         data = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in params.items() if v is not None}
-        resp = self.http.post(f"{self.base}/sendPhoto", data=data, files={"photo": (filename, photo, "image/jpeg")})
+        mime = "image/png" if filename.endswith(".png") else "image/jpeg"
+        resp = self.http.post(f"{self.base}/sendPhoto", data=data, files={"photo": (filename, photo, mime)})
         body = resp.json()
         if not body.get("ok"):
             raise TelegramError(f"sendPhoto: {body.get('description', '')}")

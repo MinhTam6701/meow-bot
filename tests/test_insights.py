@@ -134,7 +134,8 @@ def test_sunday_recap(env):
     assert "This is the weekly recap" in env.llm.chats[-1]["messages"][-1]["content"]
     env.bot.run_tick(env.conn)
     assert len([m for m in env.tg.reactions if "Your week" in m]) == 1  # once per Sunday
-    assert len(env.tg.sent) == before
+    # Besides the recap itself, only its pie picture was sent (once).
+    assert [getattr(m, "photo", None) for m in env.tg.sent[before:]] == ["report.png"]
 
 
 def test_recap_on_demand_and_plain_persona(env):

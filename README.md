@@ -91,6 +91,22 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | M4 | Subscriptions | See below |
 | M4 | Weekly recap & patterns | Sundays 20:00: the week vs last week and your 4-week average, top categories, days logged, Mochi's good days, patterns, renewals coming up, and one line from your persona. `/recap` any time |
 | M4 | Questions | See below |
+| M5 | Charts 📊 | See [Charts](#charts) |
+
+### Charts
+`/month`, `/report` and `/recap` (and the Sunday recap and the report on the 1st) come with a **pie picture**
+and a **📊 See charts** button. The button opens a page inside Telegram (a Mini App) with:
+- **Week / Month** tabs and ‹ › to go back to any week or month since your first entry;
+- spent (vs the same days of the last period), income, net, and the **savings rate** (months only: salary
+  arrives once a month, so a weekly rate swings wildly);
+- a donut of everyday spending by category. Bills (rent, phone, study, fees) are one line under it, with a
+  switch to put them in. Tap a category to see its entries;
+- budgets, the biggest entries and patterns.
+
+The numbers come from `meow/report_data.py`, which uses the same queries as the text reports, and nothing
+is stored for the page. Telegram signs who opened it (`initData`); the app checks that signature with the bot
+token and `ALLOWED_USER_IDS`, so the page only ever shows the signer's own entries. Nothing private is in the URL.
+The **📊 Charts** button beside the message box is set by `scripts/set_webhook.py`.
 
 ### Photos
 Claude reads the amount actually paid (after vouchers), the date, the bank and who was paid.
@@ -147,7 +163,7 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 
 | Path | What it is |
 |---|---|
-| `api/index.py` | Vercel entry point: Telegram webhook and the scheduler tick (any path; secrets decide) |
+| `api/index.py` | Vercel entry point: Telegram webhook, scheduler tick, charts page and its data (any path; query and headers decide) |
 | `meow/bot.py` | Messages, commands, buttons and the scheduled tick |
 | `meow/parser_rules.py`, `meow/parser.py` | Rule parser for simple messages; rules-then-Claude entry point |
 | `meow/parser_llm.py` | Claude fallback with forced tool calling |
@@ -165,6 +181,8 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/config.py`, `meow/runtime.py` | Settings from environment variables; wiring for Vercel |
 | `meow/subscriptions.py`, `meow/subs_flow.py` | Spotting subscriptions; tracking, reminders, buttons, `/subscriptions` |
 | `meow/insights.py`, `meow/ask.py` | Patterns and the weekly recap; answering questions |
+| `meow/report_data.py`, `meow/report_picture.py` | A week or month as numbers; the pie picture (Pillow, Inter font in `assets/fonts/`) |
+| `meow/webapp.py`, `meow/webapp/report.html` | The charts Mini App: signature check, data, page |
 | `supabase/migrations/` | Database schema, applied in order (0001 to 0011 are on your project) |
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
@@ -214,6 +232,7 @@ Every step is safe to repeat: daily and weekly jobs are claimed once in `job_run
 | `ALLOWED_USER_IDS` | | Your Telegram ID; comma-separate to add testers |
 | `CRON_SECRET` | | Shared with the Supabase scheduler |
 | `HOME_CURRENCY`, `DEFAULT_TIMEZONE` | `SGD`, `Asia/Singapore` | |
+| `PUBLIC_URL` | `https://meow-finance.vercel.app` | Where the charts page is served |
 | `ANTHROPIC_MODEL`, `PERSONA_MODEL`, `VISION_MODEL` | `claude-haiku-4-5` | Models for parsing, persona replies, photos |
 | `STT_MODEL` | `whisper-large-v3` | Groq speech model |
 | `PHOTO_CONFIRM_ABOVE` | `500` | Photo entries at or above this (SGD) ask first |
@@ -226,7 +245,7 @@ Every step is safe to repeat: daily and weekly jobs are claimed once in `job_run
 | Script | Use |
 |---|---|
 | `scripts/poll.py [--force]` | Run the bot locally without a public URL |
-| `scripts/set_webhook.py URL` | Point Telegram at Vercel and refresh the command menu |
+| `scripts/set_webhook.py URL` | Point Telegram at Vercel, refresh the command menu and the 📊 Charts button |
 | `scripts/try_persona.py` | Real persona replies to sample entries |
 | `scripts/try_photo.py private/*.jpg` | What Claude reads from your screenshots, and whether they're already logged. Saves nothing |
 | `scripts/eval_parser.py` | Parser accuracy and cost on sample messages |
@@ -250,7 +269,7 @@ select source, parser, count(distinct batch_id) from transactions where reverses
 
 ## Testing
 
-**187 tests, 295 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
+**200 tests, 308 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
 which is why there are more checks than tests. `tests/README.md` lists every test by name.
 
 ### Two kinds of test
@@ -285,6 +304,7 @@ and `eval_*` scripts, and one test checks that every Claude call matches the rea
 | `test_balance.py` | Both | `/balance DBS`, “what is my DBS balance?”, other currencies, unknown wallets | 6 |
 | `test_subscriptions.py` | Both | Detection rules (intervals, ±5%, stale, habits, month ends); daily job, buttons, reminders, price changes, quarterly check, `/subscriptions`, failed sends | 28 |
 | `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 20 |
+| `test_charts.py` | Both | Periods and pie slices, Telegram's signature, the data route, the picture, buttons on every report | 13 |
 | `test_mochi_art.py` | Both | Which picture for her weight and day, upload once and reuse, grandma's, fallback to text, nightly verdict | 7 |
 
 ### Running them
@@ -294,8 +314,8 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **140 passed, 155 skipped**: the end-to-end tests skip.
-To run all 295, install Postgres 16, create an empty database, and set for example
+Without `TEST_DATABASE_URL` you'll see about **146 passed, 162 skipped**: the end-to-end tests skip.
+To run all 308, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.

@@ -47,6 +47,8 @@ class Settings:
     # US$ per million tokens, used to estimate the cost of each call.
     llm_input_price: float = field(default_factory=lambda: float(os.getenv("LLM_INPUT_PRICE_PER_MTOK", "1.0")))
     llm_output_price: float = field(default_factory=lambda: float(os.getenv("LLM_OUTPUT_PRICE_PER_MTOK", "5.0")))
+    # Where the charts page is served (the Vercel app). Telegram opens it as a Mini App.
+    public_url: str = field(default_factory=lambda: os.getenv("PUBLIC_URL", "https://meow-finance.vercel.app"))
 
 
 def get_settings() -> Settings:

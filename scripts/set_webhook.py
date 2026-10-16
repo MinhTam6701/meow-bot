@@ -23,8 +23,12 @@ def main() -> None:
     tg.call("setWebhook", url=url, secret_token=s.telegram_webhook_secret,
             allowed_updates=["message", "callback_query"], drop_pending_updates=True, max_connections=10)
     tg.call("setMyCommands", commands=[{"command": c, "description": d} for c, d in COMMANDS])
+    # The "📊 Charts" button beside the message box opens this month's charts.
+    base = s.public_url.rstrip("/")
+    tg.call("setChatMenuButton", menu_button={"type": "web_app", "text": "📊 Charts",
+                                              "web_app": {"url": f"{base}/charts?view=charts&kind=month"}})
     info = tg.call("getWebhookInfo")
-    print(f"Webhook set to {info['url']}")
+    print(f"Webhook set to {info['url']}; charts button points at {base}")
     if info.get("last_error_message"):
         print(f"Last error reported by Telegram: {info['last_error_message']}")
 

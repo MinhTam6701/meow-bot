@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from . import db
+from . import db, webapp
 from .bot import Bot
 from .config import get_settings
 from .telegram import TelegramAPI
@@ -51,3 +51,17 @@ def run_tick() -> dict:
         stats = bot.run_tick(conn)
         conn.commit()  # belt and braces: never leave work in an open transaction
         return stats
+
+
+def charts_data(init_data: str, kind: str, start) -> dict:
+    """The charts page asking for a week or month: {status, body}. The signature is checked
+    before touching the database."""
+    bot = get_bot()
+    if not webapp.verify_init_data(init_data, bot.s.telegram_bot_token):
+        return {"status": 401, "body": {"error": "Please open this page from the bot again."}}
+    try:
+        with db.connect(bot.s.database_url) as conn:
+            return webapp.report_json(conn, bot, init_data, kind, start if isinstance(start, str) else None)
+    except Exception:
+        log.exception("charts data failed")
+        return {"status": 500, "body": {"error": "Couldn't load your numbers. Try again in a moment."}}

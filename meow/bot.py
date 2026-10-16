@@ -17,7 +17,8 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import ask, db, fx, insights, mochi, persona_llm, report, speech, streak as streaks
+from . import ask, db, fx, insights, mochi, persona_llm, report, report_data, report_picture, speech, streak as streaks
+from . import webapp
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
 from .config import Settings
@@ -836,8 +837,10 @@ class Bot(PhotoFlow, SubscriptionFlow):
         rows = db.month_by_category_home(conn, uid, first, nxt)
         title = f"📊 <b>{first.strftime('%B %Y')}</b> · in {home}"
         if not rows:
-            self.tg.send_message(chat_id, f"{title}\n\nNothing logged this month yet.")
+            self.tg.send_message(chat_id, f"{title}\n\nNothing logged this month yet.",
+                                 webapp.chart_button(self.s.public_url, "month", first))
             return
+        charts = self.send_chart(conn, user, chat_id, "month", first)
         limits = {b["category_id"]: b["limit_minor"] for b in db.budgets(conn, uid)}
         exp = [r for r in rows if r["type"] == "expense"]
         inc = [r for r in rows if r["type"] == "income"]
@@ -867,7 +870,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         waiting = sum(r["unconverted"] for r in rows)
         if waiting:
             lines.append(f"⏳ {waiting} entr{'y' if waiting == 1 else 'ies'} waiting for an exchange rate (not in totals).")
-        self.tg.send_message(chat_id, "\n".join(lines))
+        self.tg.send_message(chat_id, "\n".join(lines), charts)
 
     def cmd_balance(self, conn, user, chat_id, args, **_):
         """/balance for every wallet, /balance DBS (or /balance dbs vcb) for just those."""
@@ -1333,7 +1336,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
             month = date(int(m[1]), int(m[2]), 1)
         elif args.strip().lower() in ("this", "now", "current"):
             month = today.replace(day=1)
-        self.tg.send_message(chat_id, report.build(conn, user, month))
+        charts = self.send_chart(conn, user, chat_id, "month", month)
+        self.tg.send_message(chat_id, report.build(conn, user, month), charts)
 
     def cmd_check(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]
@@ -1368,10 +1372,24 @@ class Bot(PhotoFlow, SubscriptionFlow):
                             cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
         if line:
             body += f"\n\n{PERSONA_ICON[user['persona']]} <i>{escape(line, quote=False)}</i>"
+        charts = self.send_chart(conn, user, chat_id, "week", today, silent=scheduled)
         if scheduled:
-            self.send_quietly(chat_id, body)
+            self.send_quietly(chat_id, body, charts)
         else:
-            self.tg.send_message(chat_id, body)
+            self.tg.send_message(chat_id, body, charts)
+
+    def send_chart(self, conn, user: dict, chat_id: int, kind: str, day: date, silent: bool = False) -> dict:
+        """Send the pie picture for that week or month (if anything was spent) and return the
+        "See charts" button for the text that follows. A failed picture never stops the report."""
+        start, _ = report_data.bounds(kind, day)
+        try:
+            with conn.transaction():  # a savepoint: a failed query here can't spoil the report after it
+                data = report_data.build(conn, user, kind, day, self.today_for(user))
+            if data["pie"] or data["income"]:
+                self.tg.send_photo(chat_id, report_picture.render(data), filename="report.png", silent=silent)
+        except Exception:
+            log.exception("chart picture not sent")
+        return webapp.chart_button(self.s.public_url, kind, start)
 
     def cmd_recap(self, conn, user, chat_id, args, **_):
         self.send_recap(conn, user, chat_id, self.today_for(user))
@@ -1386,7 +1404,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
         if not db.claim_report(conn, uid, month):
             return False
         said = self.say(user, "report")
-        sent = self.tg.send_message(uid, report.build(conn, user, month, said))
+        charts = self.send_chart(conn, user, uid, "month", month)
+        sent = self.tg.send_message(uid, report.build(conn, user, month, said), charts)
         if sent:
             db.set_report_message(conn, uid, month, sent["message_id"])
         check_month = local.date().replace(day=1)
