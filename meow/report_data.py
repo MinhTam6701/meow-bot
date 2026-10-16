@@ -124,6 +124,19 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
     has_prev = first is not None and first < start
     next_start = end if end <= today else None
     logged = len([d for d in db.logged_days(conn, uid, start) if d < end])
+    compared_with = ("the same days last " + kind) if current else ("last " + kind)
+
+    # Fun facts and one tip: the same rules as the monthly text report, for any week or month.
+    facts = [f"📅 Logged on {logged} of {days.days} day{'s' if days.days != 1 else ''}"]
+    habit = report._habit(conn, uid, start, end)
+    if habit:
+        facts.append(f"🔁 Most frequent: “{habit['what']}” × {habit['n']} = {fmt(habit['total'], home)}")
+    priciest = report._priciest_day(conn, uid, start, end)
+    if priciest and priciest["total"]:
+        facts.append(f"🔥 Priciest day: {priciest['day'].strftime('%a %d %b')} ({fmt(priciest['total'], home)})")
+    tip = report._tip([{"category": c["name"], "total": -c["amount"]} for c in categories],
+                      {c["name"]: c["previous"] for c in categories}, spent, user.get("everyday_budget_minor"),
+                      home, compared_with=compared_with, min_growth=2000 if kind == "month" else 1000)
 
     entries = [{"day": e["occurred_on"].isoformat(), "type": e["type"], "description": e["description"],
                 "category": e["category"], "wallet": e["wallet"] or "",
@@ -146,7 +159,7 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
         "spent_text": fmt(spent, home), "income_text": fmt(income, home),
         "net_text": ("+" if net >= 0 else "") + fmt(net, home), "bills_text": fmt(bills, home),
         "previous_spent": prev["spent"], "change_pct": change,
-        "compared_with": ("the same days last " + kind) if current else ("last " + kind),
+        "compared_with": compared_with,
         # Salary arrives once a month, so a weekly savings rate swings wildly: months only.
         "savings_rate": (net * 100 // income) if kind == "month" and income > 0 else None,
         "categories": categories, "income_categories": income_rows,
@@ -155,5 +168,6 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
         "budgets": [dict(b, spent_text=fmt(b["spent"], home), limit_text=fmt(b["limit"], home),
                          pct=b["spent"] * 100 // b["limit"]) for b in budgets],
         "top": top, "patterns": patterns, "entries": entries,
+        "facts": facts, "tip": insights._plain(f"💡 {tip}") if tip else None,
         "unconverted": totals["unconverted"],
     }

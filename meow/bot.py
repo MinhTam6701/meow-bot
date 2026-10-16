@@ -1383,6 +1383,17 @@ class Bot(PhotoFlow, SubscriptionFlow):
         else:
             self.tg.send_message(chat_id, body, charts)
 
+    @staticmethod
+    def chart_caption(data: dict, head: Optional[str] = None) -> Optional[str]:
+        """Under the picture: the heading or persona line, the fun facts and the one tip."""
+        parts = [head] if head else []
+        if data.get("facts"):
+            parts.append("\n".join(escape(f, quote=False) for f in data["facts"]))
+        if data.get("tip"):
+            parts.append(escape(data["tip"], quote=False))
+        text = "\n\n".join(parts)
+        return text[:1020] if text else None  # Telegram allows 1024 characters in a caption
+
     def chart_button(self, kind: str, day: date) -> dict:
         return webapp.chart_button(self.s.public_url, kind, report_data.bounds(kind, day)[0])
 
@@ -1398,7 +1409,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 return None
             from . import report_picture  # Pillow is only needed here (scripts import bot.py without it)
 
-            return self.tg.send_photo(chat_id, report_picture.render(data), caption=(caption or "")[:1000] or None,
+            return self.tg.send_photo(chat_id, report_picture.render(data), caption=self.chart_caption(data, caption),
                                       filename="report.png", silent=silent,
                                       reply_markup=self.chart_button(kind, day))
         except Exception:

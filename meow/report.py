@@ -51,12 +51,14 @@ def _habit(conn, uid: int, first: date, nxt: date) -> Optional[dict]:
 
 
 def _priciest_day(conn, uid: int, first: date, nxt: date) -> Optional[dict]:
+    """The day with the most everyday spending (bills like rent, logged by hand or not, don't count)."""
     return conn.execute(
-        """select occurred_on as day, -sum(amount_home)::bigint as total from transactions
-           where user_id = %s and occurred_on >= %s and occurred_on < %s and type = 'expense'
-             and source <> 'recurring'
+        """select t.occurred_on as day, -sum(t.amount_home)::bigint as total
+           from transactions t left join categories c on c.id = t.category_id
+           where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
+             and t.source <> 'recurring' and coalesce(c.name, '') <> all(%s)
            group by 1 order by 2 desc limit 1""",
-        (uid, first, nxt)).fetchone()
+        (uid, first, nxt, list(db.FIXED_CATEGORIES))).fetchone()
 
 
 def build(conn, user: dict, first: date, persona_line: Optional[str] = None) -> str:
@@ -142,8 +144,9 @@ def build(conn, user: dict, first: date, persona_line: Optional[str] = None) -> 
     return "\n".join(lines)
 
 
-def _tip(cats: list[dict], prev_cats: dict, spent: int, everyday: Optional[int], home: str) -> Optional[str]:
-    """One concrete suggestion: the everyday category that grew the most."""
+def _tip(cats: list[dict], prev_cats: dict, spent: int, everyday: Optional[int], home: str,
+         compared_with: str = "last month", min_growth: int = 2000) -> Optional[str]:
+    """One concrete suggestion: the everyday category that grew the most (by at least `min_growth`)."""
     skip = {"Housing", "Phone", "Subscriptions & Fees", "Education"}
     best = None
     for r in cats:
@@ -154,7 +157,8 @@ def _tip(cats: list[dict], prev_cats: dict, spent: int, everyday: Optional[int],
         growth = amt - before
         if growth > 0 and (best is None or growth > best[1]):
             best = (r["category"], growth, amt)
-    if best and best[1] >= 2000:  # at least S$20 more
-        return (f"{escape(best[0])} grew by {fmt(best[1], home)} vs last month. "
-                f"Cutting it back to last month's level is the quickest saving.")
+    if best and best[1] >= min_growth:
+        level = "last month's level" if compared_with == "last month" else "that level"
+        return (f"{escape(best[0])} grew by {fmt(best[1], home)} vs {compared_with}. "
+                f"Cutting it back to {level} is the quickest saving.")
     return None

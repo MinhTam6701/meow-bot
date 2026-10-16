@@ -224,6 +224,10 @@
       html += `<section><h2>Biggest</h2><ul class="plain">` + d.top.map(t =>
         `<li class="entry"><span>${esc(t.description)}<small>${esc(day(t.day))}</small></span><span class="amt">${esc(t.amount_text)}</span></li>`).join("") + `</ul></section>`;
     }
+    if ((d.facts && d.facts.length) || d.tip) {
+      html += `<section><h2>Fun facts</h2><ul class="plain">` + (d.facts || []).map(f => `<li>${esc(f)}</li>`).join("")
+        + (d.tip ? `<li><b>${esc(d.tip)}</b></li>` : "") + `</ul></section>`;
+    }
     if (d.patterns.length) {
       html += `<section><h2>Patterns</h2><ul class="plain">` + d.patterns.map(p => `<li>${esc(p)}</li>`).join("") + `</ul></section>`;
     }

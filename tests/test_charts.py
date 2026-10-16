@@ -232,3 +232,35 @@ def test_api_serves_the_page_and_guards_the_data(monkeypatch):
     # Without the signature header a POST is still the webhook, which needs its own secret.
     assert client.post("/charts", json={"kind": "month"}).status_code == 401
     runtime.get_bot.cache_clear()
+
+
+def test_fun_facts_and_tip_for_weeks_and_months(env):
+    env.say("/start")
+    env.conn.execute("update users set persona = 'plain'")
+    for _ in range(3):
+        env.say("coffee 6")
+    env.say("lunch 14")
+    # Food & Drinks last week: S$5, this week so far: S$32, so the tip points at it.
+    env.say("snack 5")
+    env.conn.execute("update transactions set occurred_on = '2026-09-21' where description = 'snack'")
+    user, today = _user(env), date(2026, 9, 29)
+    week = report_data.build(env.conn, user, "week", today, today)
+    assert week["facts"][0] == "📅 Logged on 1 of 2 days"
+    assert "🔁 Most frequent: “coffee” × 3 = S$18.00" in week["facts"]
+    assert any(f.startswith("🔥 Priciest day: Tue 29 Sep (S$32.00)") for f in week["facts"])
+    assert week["tip"].startswith("💡 Food & Drinks grew by S$27.00 vs the same days last week")
+    month = report_data.build(env.conn, user, "month", today, today)
+    assert month["facts"] and "Logged on" in month["facts"][0]
+
+    n = len(env.tg.sent)
+    env.say("/recap")
+    caption = env.tg.sent[n].text
+    assert "Most frequent" in caption and "Priciest day" in caption and "💡 Food &amp; Drinks grew" in caption
+
+
+def test_caption_is_short_enough_for_telegram():
+    from meow.bot import Bot
+    data = {"facts": ["🔁 Most frequent: “" + "x" * 900 + "” × 3"], "tip": "💡 " + "y" * 300}
+    cap = Bot.chart_caption(data, "head")
+    assert len(cap) <= 1024 and cap.startswith("head")
+    assert Bot.chart_caption({"facts": [], "tip": None}) is None
