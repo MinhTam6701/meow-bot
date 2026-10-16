@@ -1,6 +1,6 @@
 """Point Telegram at your Vercel deployment and register the command menu.
 
-    python scripts/set_webhook.py https://meow-bot.vercel.app
+    python scripts/set_webhook.py https://meow-finance.vercel.app
 """
 import os
 import sys

@@ -183,7 +183,7 @@ def build_plan(xlsx_path: str, backup_path: Optional[str]) -> Plan:
             per_day[d.date()].append(float(vnd) / float(s))
     plan.fx = [{"day": d.isoformat(), "rate": round(statistics.median(v), 4)} for d, v in sorted(per_day.items())]
 
-    for acc, (cur, minor) in balances.items():
+    for acc, (_cur, minor) in balances.items():
         plan.balances[WALLET_MAP[acc][0]] = minor
 
     # Phrases used consistently (>= 2 times, >= 80% one category) become learned rules.

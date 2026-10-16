@@ -47,13 +47,14 @@ Just type what you spent or received:
 Ask about your spending too: <i>how much on Grab in August?</i>
 
 Plain numbers are SGD. <code>65k</code>, <code>65.000</code> or <code>1tr2</code> are VND.
-Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
+Name a wallet to use it; otherwise each currency goes to its default wallet (/wallet default).
 
 <b>Commands</b>
 /today – today's entries
 /month – this month by category, in SGD
 /budget – monthly budgets
 /balance – wallet balances · /balance DBS for one
+/setbalance – match a wallet to your bank, e.g. /setbalance DBS 2340.50
 /wallet – add or list wallets
 /wallet check – choose which wallets the monthly check covers
 /recurring – rent and bills that log themselves
@@ -64,7 +65,9 @@ Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
 /recap – this week so far, with patterns (sent every Sunday 20:00)
 /subscriptions – subscriptions and renewals
 /check – check balances against your bank apps
-/persona – who talks to you
+/persona – who talks to you · /roast 0–3 · /language
+/rules – categories I've learned
+/myname – your name as banks print it
 /settings – your settings
 /undo – undo the last entry
 /help – this message"""
@@ -94,8 +97,8 @@ COMMANDS = [
 
 PERSONA_ICON = {"cat": "😼", "mom": "👩", "monk": "🧘"}
 NO_AMOUNT = "I didn't see an amount there 🐾 Try something like <code>pho 65k</code>, or /help."
-CHAT_WINDOW = timedelta(minutes=30)
-RECAP_HOUR = 20  # Sunday recap, local time  # a reply without an amount this soon after a reaction is chat
+CHAT_WINDOW = timedelta(minutes=30)  # a reply without an amount this soon after a reaction is chat
+RECAP_HOUR = 20  # Sunday recap, local time
 
 SERVICE_KEYS = ("pinned_message", "new_chat_members", "left_chat_member", "message_auto_delete_timer_changed",
                 "chat_background_set", "forum_topic_created", "write_access_allowed")

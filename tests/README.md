@@ -8,7 +8,7 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # by name
 ```
 
-**155 tests, 254 checks** (a test with several examples runs once per example).
+**187 tests, 295 checks** (a test with several examples runs once per example).
 
 ## `test_parser.py` · 12 tests, 82 checks
 
@@ -173,7 +173,31 @@ Voice notes and spoken amounts (“50 nghìn”, “1 triệu 2”, “12 dollar
 - spoken amounts parse right (6 examples)
 - typed nghin is vnd too
 
-## `test_subscriptions.py` · 23 tests, 23 checks
+## `test_transfers.py` · 8 tests, 17 checks
+
+Transfers from real use: “30tr160k”, sent-then-received amounts, typos far from the rate, Claude as a fallback.
+
+- million plus thousands (6 examples)
+- sent and received (5 examples)
+- what the rules cant read goes to claude
+- real message end to end
+- typo far from the rate is not saved
+- claude reads what the rules cant
+- claude can ask and still gets checked
+- without ai the hint stays
+
+## `test_balance.py` · 6 tests, 6 checks
+
+One wallet's balance: `/balance DBS`, or asking “what is my DBS balance?”.
+
+- balance questions
+- wallets named
+- one wallet by command
+- one wallet in another currency shows home value
+- asking in words gives the balance not spending
+- unknown wallet and plain balance
+
+## `test_subscriptions.py` · 28 tests, 28 checks
 
 Subscriptions: detection rules, daily job, buttons, reminders, price changes, quarterly check.
 
@@ -200,8 +224,13 @@ Subscriptions: detection rules, daily job, buttons, reminders, price changes, qu
 - still using it every three months
 - add and stop by hand
 - buttons belong to their owner
+- scheduled work is really saved
+- bills and subscriptions are listed apart
+- subscription that logs itself gets reminders and can be stopped
+- still using a subscription that logs itself
+- bills never get subscription reminders
 
-## `test_insights.py` · 14 tests, 14 checks
+## `test_insights.py` · 20 tests, 20 checks
 
 Insights: pattern rules, entry vs question, questions answered from the ledger, Sunday recap.
 
@@ -219,3 +248,21 @@ Insights: pattern rules, entry vs question, questions answered from the ledger, 
 - recap on demand and plain persona
 - monthly report shows patterns
 - upcoming renewals in the recap
+- statements about spending are questions
+- rent counts once in the budget pace
+- one total for two meals stays one entry
+- answer with its own amounts is kept
+- recap early in the week compares the same days
+- pinned message follows each entry
+
+## `test_mochi_art.py` · 7 tests, 7 checks
+
+Mochi's pictures: the right one for her weight and day, uploaded once, sent with /mochi and the nightly verdict.
+
+- which picture
+- new art is used once the file exists
+- mochi command sends her picture and reuses the upload
+- away at grandmas shows the empty cushion
+- all art is in place
+- picture failure falls back to text
+- nightly verdict comes with her picture

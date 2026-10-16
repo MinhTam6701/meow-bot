@@ -82,7 +82,7 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | M2 | Personas | The persona replies to each entry in its own message (Claude). Code gives it the facts: your usual price for that item, today's spending, your allowance, budget alerts. It questions odd prices, and you can answer it within 30 minutes. If Claude is down, a pre-written line is used. Plain = no replies |
 | M2.1 | Your history | Money Manager import (1 year), English categories incl. Groceries, recurring bills |
 | M3 | Mochi 🐱 | Daily bowl = everyday budget ÷ days in month. Scored after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2. At 0 she goes to grandma's; 3 good days bring her back. Rent, bills, phone, subscriptions, study, recurring entries and `#planned` don't count |
-| M5 | Mochi's pictures | `/mochi` and the nightly verdict come with her picture: skinny below 40, neutral 40–69, fat from 70 (none while she's at grandma's). Art in `assets/mochi/`; each picture is uploaded to Telegram once and reused (`media` table). Replace a file to change the art |
+| M4 | Mochi's pictures | Seven still pictures, sent only with `/mochi` and the nightly verdict (never pinned): skinny below 40, neutral 40–69, fat 70–89, king from 90; sleeping after a no-spend day, sad after a bad day, an empty cushion while she's at grandma's. Art in `assets/mochi/`; each picture is uploaded to Telegram once and reused (`media` table). Replace a file to change the art |
 | M3 | Streak 🔥 | A day counts if you log or mark no-spend. One freeze a week (after 5 of 7 logged days). Milestones 3, 7, 14, 30, 100 with 🔔🧣👑 |
 | M3 | Monthly report | 1st at 09:00: totals vs last month, categories with trends, top 3, budget scorecard, fun facts, one tip |
 | M3 | Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (gap becomes an adjustment) / skip |
@@ -250,7 +250,7 @@ select source, parser, count(distinct batch_id) from transactions where reverses
 
 ## Testing
 
-**155 tests, 254 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
+**187 tests, 295 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
 which is why there are more checks than tests. `tests/README.md` lists every test by name.
 
 ### Two kinds of test
@@ -279,10 +279,13 @@ and `eval_*` scripts, and one test checks that every Claude call matches the rea
 | `test_m21.py` | Both | Imported history, learned phrases, recurring bills, wallet nicknames, income guard | 10 |
 | `test_m3.py` | End-to-end | Monthly report, balance check, `/wallet check`, pinned Mochi message, ignoring pin notices | 10 |
 | `test_persona.py` | End-to-end | Persona in its own message, price history facts, answering it, fallback when Claude is down, undo totals | 8 |
-| `test_photos.py` | Both | Card notifications, no date, several payments, duplicates, money to people or yourself, big amounts, files, privacy scrubbing | 21 (25) |
-| `test_voice.py` | Both | Voice notes in English/Vietnamese, transfers by voice, bank names after a comma, Groq down, silence, spoken amounts | 13 (37) |
-| `test_subscriptions.py` | Both | Detection rules (intervals, ±5%, stale, habits, month ends); daily job, buttons, reminders, price changes, quarterly check, `/subscriptions`, failed sends | 23 |
-| `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 14 |
+| `test_photos.py` | Both | Card notifications, no date, several payments, duplicates, money to people or yourself, big amounts, files, privacy scrubbing | 21 (26) |
+| `test_voice.py` | Both | Voice notes in English/Vietnamese, transfers by voice, bank names after a comma, Groq down, silence, spoken amounts | 13 (34) |
+| `test_transfers.py` | Both | `30tr160k`, sent-then-received amounts, typos far from the rate, Claude fallback for transfers | 8 (17) |
+| `test_balance.py` | Both | `/balance DBS`, “what is my DBS balance?”, other currencies, unknown wallets | 6 |
+| `test_subscriptions.py` | Both | Detection rules (intervals, ±5%, stale, habits, month ends); daily job, buttons, reminders, price changes, quarterly check, `/subscriptions`, failed sends | 28 |
+| `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 20 |
+| `test_mochi_art.py` | Both | Which picture for her weight and day, upload once and reuse, grandma's, fallback to text, nightly verdict | 7 |
 
 ### Running them
 ```bash
@@ -291,8 +294,8 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **135 passed, 119 skipped**: the end-to-end tests skip.
-To run all 254, install Postgres 16, create an empty database, and set for example
+Without `TEST_DATABASE_URL` you'll see about **140 passed, 155 skipped**: the end-to-end tests skip.
+To run all 295, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.
