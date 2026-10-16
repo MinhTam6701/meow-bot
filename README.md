@@ -315,7 +315,7 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **147 passed, 162 skipped**: the end-to-end tests skip.
+Without `TEST_DATABASE_URL` you'll see about **146 passed, 163 skipped**: the end-to-end tests skip.
 To run all 309, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
