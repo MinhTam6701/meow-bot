@@ -56,7 +56,7 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | Command | What it does |
 |---|---|
 | `/today`, `/month` | Today's entries; this month by category (in SGD) |
-| `/balance`, `/setbalance DBS 2340.50` | Wallet balances; correct one (the gap is recorded as an adjustment) |
+| `/balance`, `/balance DBS`, "what is my DBS balance?", `/setbalance DBS 2340.50` | All balances, or one wallet with its latest entries; correct one (the gap is recorded as an adjustment) |
 | `/wallet` | List wallets · `add GrabPay SGD ewallet` · `default Cash` · `check DBS VPBank VCB` (which wallets the monthly check covers) |
 | `/budget` | `Food 400`, `total 1600`, `everyday 600` (Mochi's allowance), `Food off` |
 | `/recurring` | Bills you need, logged automatically: `add rent 800 on 1`, `stop 2`; `sub 3` moves one to subscriptions, `bill 3` back |

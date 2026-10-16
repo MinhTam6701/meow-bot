@@ -53,7 +53,7 @@ Name a wallet to use it; otherwise SGD goes to DBS and VND to VP.
 /today – today's entries
 /month – this month by category, in SGD
 /budget – monthly budgets
-/balance – wallet balances
+/balance – wallet balances · /balance DBS for one
 /wallet – add or list wallets
 /wallet check – choose which wallets the monthly check covers
 /recurring – rent and bills that log themselves
@@ -254,6 +254,11 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
         def reply(message: str) -> None:
             self.tg.send_message(chat_id, prefix + message)
+
+        if not user.get("pending_input") and ask.is_balance_question(said):
+            db.set_pending(conn, uid, None)
+            reply(self.balance_text(conn, user, ask.wallets_named(said, ctx)))
+            return
 
         if (not user.get("pending_input") and ask.is_question(said, chatting=self.recent_reaction(user))
                 and not parse_with_rules(text, ctx)):
@@ -862,8 +867,27 @@ class Bot(PhotoFlow, SubscriptionFlow):
         self.tg.send_message(chat_id, "\n".join(lines))
 
     def cmd_balance(self, conn, user, chat_id, args, **_):
-        home, today = user["home_currency"], self.today_for(user)
-        rows = db.balances(conn, user["telegram_id"])
+        """/balance for every wallet, /balance DBS (or /balance dbs vcb) for just those."""
+        wallets = []
+        if args.strip():
+            ctx = self.context(conn, user, self.today_for(user))
+            wallets = ask.wallets_named(args, ctx)
+            if not wallets:
+                names = ", ".join(w.name for w in ctx.wallets)
+                self.tg.send_message(chat_id, f"I don't have a wallet called \"{escape(args.strip())}\".\n"
+                                              f"Your wallets: {escape(names)}")
+                return
+        self.tg.send_message(chat_id, self.balance_text(conn, user, wallets))
+
+    def balance_text(self, conn, user, only: Optional[list] = None) -> str:
+        home, today, uid = user["home_currency"], self.today_for(user), user["telegram_id"]
+        rows = db.balances(conn, uid)
+        if only:
+            ids = [w.id for w in only]
+            rows = sorted((r for r in rows if r["wallet_id"] in ids), key=lambda r: ids.index(r["wallet_id"]))
+        if only and len(rows) == 1:
+            return self.one_balance(conn, user, rows[0])
+
         lines = ["👛 <b>Balances</b>", ""]
         total, missing = 0, False
         for r in rows:
@@ -877,7 +901,25 @@ class Bot(PhotoFlow, SubscriptionFlow):
                     missing = True
         lines += ["", f"Total ≈ <b>{fmt(total, home)}</b>" + (" (some wallets have no rate yet)" if missing else ""),
                   "Fix a wallet with /setbalance if it doesn't match your bank."]
-        self.tg.send_message(chat_id, "\n".join(lines))
+        return "\n".join(lines)
+
+    def one_balance(self, conn, user, r: dict) -> str:
+        home, today = user["home_currency"], self.today_for(user)
+        lines = [f"👛 <b>{escape(r['name'])}</b>: <b>{fmt(r['balance_minor'], r['currency'])}</b>"]
+        if r["currency"] != home:
+            rate = self.home_rate(conn, home, r["currency"], today)
+            if rate:
+                lines.append(f"≈ {fmt(fx.to_home(r['balance_minor'], r['currency'], home, rate), home)}")
+        recent = db.recent_in_wallet(conn, user["telegram_id"], r["wallet_id"])
+        if recent:
+            lines += ["", "<b>Latest</b>"]
+            for e in recent:
+                sign = "+" if e["amount_minor"] > 0 else "−"
+                icon = e["category_emoji"] or {"transfer": "🔁", "adjustment": "✏️"}.get(e["type"], "•")
+                lines.append(f"{icon} {e['occurred_on'].strftime('%d %b')} {escape(e['description'] or '')} "
+                             f"{sign}{fmt(abs(e['amount_minor']), e['currency'])}")
+        lines += ["", f"Doesn't match your bank? <code>/setbalance {escape(r['name'])} amount</code>"]
+        return "\n".join(lines)
 
     def cmd_setbalance(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]

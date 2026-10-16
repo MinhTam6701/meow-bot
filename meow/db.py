@@ -249,6 +249,17 @@ def balances(conn, user_id: int) -> list[dict]:
     ).fetchall()
 
 
+def recent_in_wallet(conn, user_id: int, wallet_id: int, n: int = 5) -> list[dict]:
+    """The last few movements in one wallet (undone entries left out)."""
+    return conn.execute(
+        """select t.type, t.amount_minor, t.currency, t.description, t.occurred_on, c.emoji as category_emoji
+           from live_transactions t left join categories c on c.id = t.category_id
+           where t.user_id = %s and t.wallet_id = %s
+           order by t.occurred_on desc, t.id desc limit %s""",
+        (user_id, wallet_id, n),
+    ).fetchall()
+
+
 def wallet_balance(conn, wallet_id: int) -> int:
     row = conn.execute(
         "select coalesce(sum(amount_minor), 0)::bigint as b from transactions where wallet_id = %s", (wallet_id,)

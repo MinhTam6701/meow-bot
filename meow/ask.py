@@ -56,6 +56,33 @@ def is_question(text: str, chatting: bool = False) -> bool:
     return asked or about_data
 
 
+_BALANCE = re.compile(r"\b(balance|balances|số dư|so du|sodu)\b|how much (money )?(do i have|is (left )?in|left in)"
+                      r"|(còn|con) bao (nhiêu|nhieu) (tiền|tien)? ?(trong|ở|o)\b", re.IGNORECASE)
+
+
+def is_balance_question(text: str) -> bool:
+    """'what is my DBS balance?', 'số dư VP', 'how much is in VCB' — not an entry with an amount."""
+    return bool(_BALANCE.search(text)) and not re.search(r"\d", text)
+
+
+def wallets_named(text: str, ctx: ParseContext) -> list:
+    """Wallets mentioned by name or alias, in order: 'DBS and vietcombank' -> [DBS, VCB].
+    Tries three-, two- and one-word spans so 'tiết kiệm mua nhà' beats 'tiết kiệm'."""
+    words = re.findall(r"[^\W_]+", text)
+    found, i = [], 0
+    while i < len(words):
+        for size in (4, 3, 2, 1):
+            wal = ctx.wallet_by_name(" ".join(words[i:i + size])) if i + size <= len(words) else None
+            if wal:
+                if wal not in found:
+                    found.append(wal)
+                i += size
+                break
+        else:
+            i += 1
+    return found
+
+
 class Query(BaseModel):
     show: Literal["total", "list", "by_category", "by_month", "by_wallet"] = "total"
     type: Literal["expense", "income"] = "expense"

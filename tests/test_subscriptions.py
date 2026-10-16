@@ -219,7 +219,7 @@ def test_missed_renewal_rolls_forward_quietly(env):
 def test_still_using_it_every_three_months(env):
     env.say("/start")
     track(env, "Gym", "120")
-    env.conn.execute("update subscriptions set created_at = now() - interval '100 days'")
+    env.conn.execute("update subscriptions set created_at = %s", (env.clock.now - timedelta(days=100),))
     env.clock.now = datetime(2026, 12, 30, 3, 0, tzinfo=timezone.utc)
     check = next(m for m in tick(env) if "Still using" in m.text)
     assert "S$120.00 a month is about S$1,440.00 a year" in check.text
@@ -306,7 +306,7 @@ def test_still_using_a_subscription_that_logs_itself(env):
     env.say("/start")
     env.say("/recurring add iqiyi 65556 on 25")
     env.say(f"/recurring sub {rule_id(env, 'iqiyi')}")
-    env.conn.execute("update recurring_rules set created_at = now() - interval '100 days'")
+    env.conn.execute("update recurring_rules set created_at = %s", (env.clock.now - timedelta(days=100),))  # the fake clock, not now()
     check = next(m for m in tick(env) if "Still using" in m.text)
     assert "<b>iqiyi</b>? 65,556₫ a month is about 786,672₫ a year" in check.text
     env.press(next(b for b in buttons(check.markup) if b.endswith(":cancel")), check.id)
