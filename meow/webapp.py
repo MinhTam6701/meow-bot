@@ -31,8 +31,9 @@ def verify_init_data(init_data: str, bot_token: str, now: Optional[float] = None
         fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
     except ValueError:
         return None
+    # Every field except `hash` is checked, including `signature` (Telegram's newer third-party
+    # signature): leaving it out makes every real request fail.
     received = fields.pop("hash", "")
-    fields.pop("signature", None)  # third-party signature; not part of the bot-token check
     check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
     secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
     expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()

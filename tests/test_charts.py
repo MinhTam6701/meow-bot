@@ -60,6 +60,8 @@ def test_signature_is_checked():
     assert webapp.verify_init_data("", TOKEN) is None
     assert webapp.verify_init_data("hash=abc&user=%7B%7D", TOKEN) is None
     assert webapp.verify_init_data(sign(ME), "") is None                               # no token configured
+    # Newer Telegram apps add a `signature` field; it is part of what the hash covers.
+    assert webapp.verify_init_data(sign(ME, signature="ed25519sig"), TOKEN)["id"] == ME
 
 
 def test_picture_is_a_png():
@@ -157,9 +159,9 @@ def test_report_recap_and_month_come_with_picture_and_button(env):
         n = len(env.tg.sent)
         env.say(cmd)
         new = env.tg.sent[n:]
-        pictures = [m for m in new if getattr(m, "photo", None)]
-        assert len(pictures) == 1 and pictures[0].photo == "report.png", cmd
-        url = _chart_button(new[-1].markup)[0]["web_app"]["url"]
+        # One message: the picture, with the button under it (no separate text).
+        assert len(new) == 1 and new[0].photo == "report.png", cmd
+        url = _chart_button(new[0].markup)[0]["web_app"]["url"]
         assert url.startswith("https://") and f"kind={kind}" in url and "view=charts" in url, cmd
 
 
@@ -167,6 +169,16 @@ def test_no_picture_when_nothing_was_spent(env):
     env.say("/start")
     env.say("/month")
     assert not [m for m in env.tg.sent if getattr(m, "photo", None)]
+
+
+def test_recap_persona_line_rides_on_the_picture(env):
+    env.say("/start")
+    env.say("grab 12.5")
+    env.llm.replies.append("Nice and calm week.")
+    n = len(env.tg.sent)
+    env.say("/recap")
+    new = env.tg.sent[n:]
+    assert len(new) == 1 and new[0].photo == "report.png" and "Nice and calm week." in new[0].text
 
 
 def test_a_failed_picture_never_blocks_the_report(env):

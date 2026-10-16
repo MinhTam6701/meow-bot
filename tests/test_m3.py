@@ -78,6 +78,7 @@ def test_streak_milestone_on_the_card(env):
 
 
 def test_monthly_report_and_balance_check(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     at(env, 2026, 9, 10)
     env.say("/start")
     env.conn.execute("update users set reminders_on = false")
@@ -116,6 +117,7 @@ def test_monthly_report_and_balance_check(env):
 
 
 def test_report_command_and_check_command(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     at(env, 2026, 9, 10)
     env.say("/start")
     env.say("lunch 12")

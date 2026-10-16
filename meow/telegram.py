@@ -1,6 +1,7 @@
 """A thin Telegram Bot API client (only the methods the bot uses)."""
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -37,13 +38,15 @@ class TelegramAPI:
                          disable_notification=silent or None)
 
     def send_photo(self, chat_id: int, photo, caption: Optional[str] = None, filename: str = "photo.jpg",
-                   silent: bool = False) -> dict:
+                   silent: bool = False, reply_markup: Optional[dict] = None) -> dict:
         """`photo` is a Telegram file_id (str) or the image itself (bytes, uploaded once)."""
         params = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML" if caption else None,
                   "disable_notification": silent or None}
         if isinstance(photo, str):
-            return self.call("sendPhoto", photo=photo, **params)
+            return self.call("sendPhoto", photo=photo, reply_markup=reply_markup, **params)
         data = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in params.items() if v is not None}
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
         mime = "image/png" if filename.endswith(".png") else "image/jpeg"
         resp = self.http.post(f"{self.base}/sendPhoto", data=data, files={"photo": (filename, photo, mime)})
         body = resp.json()

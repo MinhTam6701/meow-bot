@@ -117,6 +117,7 @@ def sunday_8pm(env):
 
 
 def test_sunday_recap(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     env.say("/start")
     env.say("/budget Shopping 100")
     env.say("lunch 14")
@@ -134,8 +135,7 @@ def test_sunday_recap(env):
     assert "This is the weekly recap" in env.llm.chats[-1]["messages"][-1]["content"]
     env.bot.run_tick(env.conn)
     assert len([m for m in env.tg.reactions if "Your week" in m]) == 1  # once per Sunday
-    # Besides the recap itself, only its pie picture was sent (once).
-    assert [getattr(m, "photo", None) for m in env.tg.sent[before:]] == ["report.png"]
+    assert len(env.tg.sent) == before
 
 
 def test_recap_on_demand_and_plain_persona(env):
@@ -146,6 +146,7 @@ def test_recap_on_demand_and_plain_persona(env):
 
 
 def test_monthly_report_shows_patterns(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     env.say("/start")
     start = date(2026, 8, 31)
     for i in range(30):
@@ -206,6 +207,7 @@ def test_answer_with_its_own_amounts_is_kept(env):
 
 
 def test_recap_early_in_the_week_compares_the_same_days(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     env.say("/start")
     env.clock.now = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)   # Mon 5 Oct, 17:00
     env.say("lunch 27.75")

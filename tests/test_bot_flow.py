@@ -118,6 +118,7 @@ def test_unknown_currency_gets_a_cash_wallet(env):
 
 
 def test_setbalance_balance_month_undo(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     env.say("/start")
     assert "now <b>S$2,340.50</b>" in env.say("/setbalance DBS 2,340.50").text
     env.say("/setbalance vp 12m")

@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import ask, db, fx, insights, mochi, persona_llm, report, report_data, report_picture, speech, streak as streaks
+from . import ask, db, fx, insights, mochi, persona_llm, report, report_data, speech, streak as streaks
 from . import webapp
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
@@ -838,9 +838,11 @@ class Bot(PhotoFlow, SubscriptionFlow):
         title = f"📊 <b>{first.strftime('%B %Y')}</b> · in {home}"
         if not rows:
             self.tg.send_message(chat_id, f"{title}\n\nNothing logged this month yet.",
-                                 webapp.chart_button(self.s.public_url, "month", first))
+                                 self.chart_button("month", first))
             return
-        charts = self.send_chart(conn, user, chat_id, "month", first)
+        if self.send_chart(conn, user, chat_id, "month", first):
+            return
+        charts = self.chart_button("month", first)
         limits = {b["category_id"]: b["limit_minor"] for b in db.budgets(conn, uid)}
         exp = [r for r in rows if r["type"] == "expense"]
         inc = [r for r in rows if r["type"] == "income"]
@@ -1336,8 +1338,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
             month = date(int(m[1]), int(m[2]), 1)
         elif args.strip().lower() in ("this", "now", "current"):
             month = today.replace(day=1)
-        charts = self.send_chart(conn, user, chat_id, "month", month)
-        self.tg.send_message(chat_id, report.build(conn, user, month), charts)
+        if not self.send_chart(conn, user, chat_id, "month", month):
+            self.tg.send_message(chat_id, report.build(conn, user, month), self.chart_button("month", month))
 
     def cmd_check(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]
@@ -1370,26 +1372,38 @@ class Bot(PhotoFlow, SubscriptionFlow):
             line, call = persona_llm.react(self.llm, self.s.persona_model, self.persona_system(user), text)
             db.log_llm_call(conn, user["telegram_id"], "recap", call,
                             cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
-        if line:
-            body += f"\n\n{PERSONA_ICON[user['persona']]} <i>{escape(line, quote=False)}</i>"
-        charts = self.send_chart(conn, user, chat_id, "week", today, silent=scheduled)
+        said = f"{PERSONA_ICON[user['persona']]} <i>{escape(line, quote=False)}</i>" if line else None
+        if self.send_chart(conn, user, chat_id, "week", today, caption=said, silent=scheduled):
+            return
+        if said:
+            body += f"\n\n{said}"
+        charts = self.chart_button("week", today)
         if scheduled:
             self.send_quietly(chat_id, body, charts)
         else:
             self.tg.send_message(chat_id, body, charts)
 
-    def send_chart(self, conn, user: dict, chat_id: int, kind: str, day: date, silent: bool = False) -> dict:
-        """Send the pie picture for that week or month (if anything was spent) and return the
-        "See charts" button for the text that follows. A failed picture never stops the report."""
-        start, _ = report_data.bounds(kind, day)
+    def chart_button(self, kind: str, day: date) -> dict:
+        return webapp.chart_button(self.s.public_url, kind, report_data.bounds(kind, day)[0])
+
+    def send_chart(self, conn, user: dict, chat_id: int, kind: str, day: date, caption: Optional[str] = None,
+                   silent: bool = False) -> Optional[dict]:
+        """The report as one message: the pie picture with the "See charts" button under it.
+        Returns the sent message, or None when there is nothing to draw or the picture failed;
+        the caller then sends the text version instead, so a report always arrives."""
         try:
-            with conn.transaction():  # a savepoint: a failed query here can't spoil the report after it
+            with conn.transaction():  # a savepoint: a failed query here can't spoil the text fallback
                 data = report_data.build(conn, user, kind, day, self.today_for(user))
-            if data["pie"] or data["income"]:
-                self.tg.send_photo(chat_id, report_picture.render(data), filename="report.png", silent=silent)
+            if not (data["pie"] or data["income"]):
+                return None
+            from . import report_picture  # Pillow is only needed here (scripts import bot.py without it)
+
+            return self.tg.send_photo(chat_id, report_picture.render(data), caption=(caption or "")[:1000] or None,
+                                      filename="report.png", silent=silent,
+                                      reply_markup=self.chart_button(kind, day))
         except Exception:
             log.exception("chart picture not sent")
-        return webapp.chart_button(self.s.public_url, kind, start)
+            return None
 
     def cmd_recap(self, conn, user, chat_id, args, **_):
         self.send_recap(conn, user, chat_id, self.today_for(user))
@@ -1404,8 +1418,11 @@ class Bot(PhotoFlow, SubscriptionFlow):
         if not db.claim_report(conn, uid, month):
             return False
         said = self.say(user, "report")
-        charts = self.send_chart(conn, user, uid, "month", month)
-        sent = self.tg.send_message(uid, report.build(conn, user, month, said), charts)
+        caption = f"📊 <b>{month.strftime('%B %Y')}</b> · monthly report" + (
+            f"\n<i>{escape(said, quote=False)}</i>" if said else "")
+        sent = self.send_chart(conn, user, uid, "month", month, caption=caption)
+        if not sent:
+            sent = self.tg.send_message(uid, report.build(conn, user, month, said), self.chart_button("month", month))
         if sent:
             db.set_report_message(conn, uid, month, sent["message_id"])
         check_month = local.date().replace(day=1)

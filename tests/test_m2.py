@@ -182,6 +182,7 @@ def test_language_setting(env):
 # --- budgets -------------------------------------------------------------------------
 
 def test_budget_alerts_at_80_and_100(env):
+    env.tg.photo_fails = True  # checks the text version (sent when there's no picture)
     env.say("/start")
     assert "S$20.00" in env.say("/budget Food 20").text
     assert "budget" not in env.say("lunch 14").text            # 70%
