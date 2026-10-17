@@ -39,6 +39,14 @@ def bowl(everyday_budget_minor: int, day: date) -> int:
     return everyday_budget_minor // calendar.monthrange(day.year, day.month)[1]
 
 
+def bowl_on(state: Optional[dict], everyday_budget_minor: int, day: date) -> int:
+    """The bowl for `day`: your own daily pace if you set one for the rest of that month, else the usual."""
+    o, since = (state or {}).get("bowl_override_minor"), (state or {}).get("bowl_override_from")
+    if o and since and since <= day and (since.year, since.month) == (day.year, day.month):
+        return o
+    return bowl(everyday_budget_minor, day)
+
+
 def result_for(spent: int, bowl_minor: int, logged: bool) -> str:
     if not logged:
         return "silent"

@@ -5,13 +5,15 @@ Amounts are integer minor units of the home currency; `*_text` fields are alread
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date, timedelta
 from typing import Optional
 
-from . import db, insights, report
+from . import db, insights, mochi, report
 from .money import fmt, minor_digits
 
 KINDS = ("week", "month")
+MIN_CHANGE = 1000  # S$10: smaller moves between categories aren't worth a fact
 PIE_SLICES = 5  # biggest categories; the rest is "Other"
 
 
@@ -34,6 +36,10 @@ def label(kind: str, start: date, end: date) -> str:
     if start.month == last.month:
         return f"{start.day} – {last.day} {last.strftime('%b %Y')}"
     return f"{start.day} {start.strftime('%b')} – {last.day} {last.strftime('%b %Y')}"
+
+
+def day_text(d: date) -> str:
+    return f"{d:%a} {d.day} {d:%b}"  # Tue 8 Sep
 
 
 def first_entry_day(conn, uid: int) -> Optional[date]:
@@ -71,6 +77,49 @@ def pie(categories: list[dict], include_bills: bool = False, home: str = "SGD") 
         s["amount_text"] = fmt(s["amount"], home)
         s["members"] = [c["name"] for c in (tail if s["name"] == "Other" and tail else [s])]
     return slices
+
+
+def biggest_changes(now: dict[str, int], before: dict[str, int], at_least: int = MIN_CHANGE) -> list[tuple[str, int]]:
+    """The everyday category that went up most and the one that went down most (in money, not %:
+    a small category doubling is rarely news). Bills are left out; changes under `at_least` too."""
+    diffs = [(name, now.get(name, 0) - before.get(name, 0)) for name in set(now) | set(before)
+             if name not in db.FIXED_CATEGORIES]
+    up = max((x for x in diffs if x[1] >= at_least), key=lambda x: x[1], default=None)
+    down = min((x for x in diffs if x[1] <= -at_least), key=lambda x: x[1], default=None)
+    return [x for x in (up, down) if x]
+
+
+def pace(conn, user: dict, kind: str, start: date, end: date, today: date, current: bool) -> Optional[dict]:
+    """The tip: how much of the everyday budget is left and what that means per day from tomorrow.
+    A week gets its share of the month's everyday budget (budget × 7 ÷ days in the month).
+    A finished period says how it ended. No everyday budget, no tip."""
+    budget = user.get("everyday_budget_minor")
+    if not budget:
+        return None
+    uid, home = user["telegram_id"], user["home_currency"]
+    if kind == "month":
+        allowance = budget
+        name = f"your {fmt(budget, home)} everyday budget"
+    else:
+        allowance = budget * 7 // calendar.monthrange(start.year, start.month)[1]
+        name = f"this week's {fmt(allowance, home)} share of your everyday budget"
+    if not current:
+        diff = allowance - db.everyday_spent(conn, uid, start, end)
+        name = name.replace("this week's", "the week's")
+        return {"text": f"💡 Finished {fmt(abs(diff), home)} {'under' if diff >= 0 else 'over'} {name}.",
+                "per_day": None}
+    tomorrow = today + timedelta(days=1)
+    left = allowance - db.everyday_spent(conn, uid, start, tomorrow)
+    days_left = (end - tomorrow).days
+    if left < 0:
+        return {"text": f"💡 {fmt(-left, home)} over {name} already. Every no-spend day from here helps.",
+                "per_day": None}
+    if days_left == 0:
+        return {"text": f"💡 {fmt(left, home)} left of {name}, and today is the last day.", "per_day": None}
+    per_day = left // days_left
+    when = "for tomorrow, the last day" if days_left == 1 else f"for the {days_left} days after today"
+    return {"text": f"💡 {fmt(left, home)} left of {name}: about {fmt(per_day, home)} a day {when}.",
+            "per_day": per_day if per_day > 0 else None}
 
 
 def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
@@ -126,17 +175,23 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
     logged = len([d for d in db.logged_days(conn, uid, start) if d < end])
     compared_with = ("the same days last " + kind) if current else ("last " + kind)
 
-    # Fun facts and one tip: the same rules as the monthly text report, for any week or month.
+    # Fun facts: days logged, the biggest everyday spend, and the categories that moved most.
     facts = [f"📅 Logged on {logged} of {days.days} day{'s' if days.days != 1 else ''}"]
-    habit = report._habit(conn, uid, start, end)
-    if habit:
-        facts.append(f"🔁 Most frequent: “{habit['what']}” × {habit['n']} = {fmt(habit['total'], home)}")
-    priciest = report._priciest_day(conn, uid, start, end)
-    if priciest and priciest["total"]:
-        facts.append(f"🔥 Priciest day: {priciest['day'].strftime('%a %d %b')} ({fmt(priciest['total'], home)})")
-    tip = report._tip([{"category": c["name"], "total": -c["amount"]} for c in categories],
-                      {c["name"]: c["previous"] for c in categories}, spent, user.get("everyday_budget_minor"),
-                      home, compared_with=compared_with, min_growth=2000 if kind == "month" else 1000)
+    biggest = report._top_expenses(conn, uid, start, end, n=1)
+    if biggest:
+        b = biggest[0]
+        facts.append(f"💸 Biggest spend: {b['description'] or 'no note'} {fmt(b['amount'], home)} "
+                     f"({day_text(b['occurred_on'])})")
+    moved = biggest_changes({c["name"]: c["amount"] for c in categories}, prev_by_cat)
+    if moved:
+        facts.append(" · ".join(f"{'📈' if d > 0 else '📉'} {name} {'+' if d > 0 else '−'}{fmt(abs(d), home)}"
+                                for name, d in moved) + f" vs {compared_with}")
+    pace_tip = pace(conn, user, kind, start, end, today, current)
+    if pace_tip and kind == "month" and pace_tip["per_day"]:
+        state = db.mochi_state(conn, uid)
+        if state and mochi.bowl_on(state, user["everyday_budget_minor"], today + timedelta(days=1)) != pace_tip["per_day"]:
+            pace_tip["bowl_offer"] = {"minor": pace_tip["per_day"], "from": (today + timedelta(days=1)).isoformat(),
+                                      "text": f"🐱 Set Mochi's bowl to {fmt(pace_tip['per_day'], home)}/day"}
 
     entries = [{"day": e["occurred_on"].isoformat(), "type": e["type"], "description": e["description"],
                 "category": e["category"], "wallet": e["wallet"] or "",
@@ -168,6 +223,42 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
         "budgets": [dict(b, spent_text=fmt(b["spent"], home), limit_text=fmt(b["limit"], home),
                          pct=b["spent"] * 100 // b["limit"]) for b in budgets],
         "top": top, "patterns": patterns, "entries": entries,
-        "facts": facts, "tip": insights._plain(f"💡 {tip}") if tip else None,
+        "facts": facts, "tip": pace_tip["text"] if pace_tip else None,
+        "bowl_offer": (pace_tip or {}).get("bowl_offer"),
         "unconverted": totals["unconverted"],
     }
+
+
+def suggestion_facts(data: dict) -> str:
+    """What the AI may base its suggestion on: numbers already worked out here, nothing to compute."""
+    home = data["home"]
+    everyday = [c for c in data["categories"] if not c["bill"]]
+    period = (f"{data['label']} ({data['kind']}), "
+              + (f"in progress: {data['days']} of {data['days_total']} days so far" if data["current"]
+                 else "finished"))
+    lines = [f"Period: {period}.",
+             f"Everyday spending: {data['everyday_text']}; bills (rent, phone, study, fees) {data['bills_text']} "
+             f"are separate. Income {data['income_text']}.",
+             "", f"Everyday categories, this period vs {data['compared_with']}:"]
+    lines += [f"- {c['name']}: {c['amount_text']} vs {fmt(c['previous'], home)}" for c in everyday[:10]]
+    if data["facts"]:
+        lines += ["", "Fun facts shown to them:"] + [f"- {f}" for f in data["facts"]]
+    if data["tip"]:
+        lines += ["", f"Budget pace shown to them: {data['tip'].lstrip('💡 ')}"]
+    if data["budgets"]:
+        lines += ["", "Budgets: " + "; ".join(f"{b['name']} {b['spent_text']} of {b['limit_text']} ({b['pct']}%)"
+                                              for b in data["budgets"])]
+    bills = {c["name"] for c in data["categories"] if c["bill"]}
+    spends = [e for e in data["entries"] if e["type"] == "expense" and e["category"] not in bills]
+    if spends:
+        def line(e):
+            day = date.fromisoformat(e["day"]).strftime("%a %d %b")
+            return f"- {day}: {e['description'] or 'no note'} ({e['category']}) {e['amount_text']}"
+        lines += ["", "Biggest everyday entries:"] + [line(e) for e in sorted(spends, key=lambda e: -e["amount"])[:8]]
+        up = next((name for name, d in biggest_changes({c["name"]: c["amount"] for c in data["categories"]},
+                                                       {c["name"]: c["previous"] for c in data["categories"]})
+                   if d > 0), None)
+        if up:
+            mine = [e for e in spends if e["category"] == up][:12]
+            lines += ["", f"All {up} entries this period:"] + [line(e) for e in mine]
+    return "\n".join(lines)

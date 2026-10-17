@@ -234,33 +234,112 @@ def test_api_serves_the_page_and_guards_the_data(monkeypatch):
     runtime.get_bot.cache_clear()
 
 
-def test_fun_facts_and_tip_for_weeks_and_months(env):
+def _week_and_month(env):
+    """Tue 29 Sep 2026. Everyday budget S$600 (S$20 a day in September, S$140 a week)."""
     env.say("/start")
-    env.conn.execute("update users set persona = 'plain'")
+    env.say("/budget everyday 600")
     for _ in range(3):
         env.say("coffee 6")
-    env.say("lunch 14")
-    # Food & Drinks last week: S$5, this week so far: S$32, so the tip points at it.
-    env.say("snack 5")
-    env.conn.execute("update transactions set occurred_on = '2026-09-21' where description = 'snack'")
-    user, today = _user(env), date(2026, 9, 29)
-    week = report_data.build(env.conn, user, "week", today, today)
-    assert week["facts"][0] == "📅 Logged on 1 of 2 days"
-    assert "🔁 Most frequent: “coffee” × 3 = S$18.00" in week["facts"]
-    assert any(f.startswith("🔥 Priciest day: Tue 29 Sep (S$32.00)") for f in week["facts"])
-    assert week["tip"].startswith("💡 Food & Drinks grew by S$27.00 vs the same days last week")
-    month = report_data.build(env.conn, user, "month", today, today)
-    assert month["facts"] and "Logged on" in month["facts"][0]
+    env.say("grab 25")
+    env.say("rent 800")                      # a bill: never the biggest spend, never a "change"
+    env.say("grab 5")
+    env.say("shopee 40")
+    env.conn.execute("update transactions set occurred_on = '2026-09-21' where description = 'grab' "
+                     "and amount_minor = -500")
+    env.conn.execute("update transactions set occurred_on = '2026-09-22' where description = 'shopee'")
+    return _user(env), date(2026, 9, 29)
 
+
+def test_fun_facts_are_logged_days_biggest_spend_and_biggest_changes(env):
+    user, today = _week_and_month(env)
+    week = report_data.build(env.conn, user, "week", today, today)
+    assert week["facts"] == ["📅 Logged on 1 of 2 days",
+                             "💸 Biggest spend: grab S$25.00 (Tue 29 Sep)",
+                             "📈 Transport +S$20.00 · 📉 Shopping −S$40.00 vs the same days last week"]
+    assert all(t["description"] != "rent" for t in week["top"])   # the Biggest list leaves bills out too
+    # Small moves (under S$10) aren't worth a fact; bills never count.
+    assert report_data.biggest_changes({"Food": 900, "Housing": 80000}, {"Food": 100}) == []
+
+
+def test_tip_is_the_pace_for_the_rest_of_the_period(env):
+    user, today = _week_and_month(env)
+    week = report_data.build(env.conn, user, "week", today, today)
+    assert week["tip"] == ("💡 S$97.00 left of this week's S$140.00 share of your everyday budget: "
+                           "about S$19.40 a day for the 5 days after today.")
+    assert week["bowl_offer"] is None                              # the bowl is a monthly thing
+    month = report_data.build(env.conn, user, "month", today, today)
+    assert month["tip"] == ("💡 S$512.00 left of your S$600.00 everyday budget: "
+                            "about S$512.00 a day for tomorrow, the last day.")
+    assert month["bowl_offer"] == {"minor": 51200, "from": "2026-09-30",
+                                   "text": "🐱 Set Mochi's bowl to S$512.00/day"}
+    aug = report_data.build(env.conn, user, "month", date(2026, 8, 1), today)
+    assert aug["tip"] == "💡 Finished S$600.00 under your S$600.00 everyday budget."
+    env.conn.execute("update users set everyday_budget_minor = null")
+    assert report_data.build(env.conn, _user(env), "month", today, today)["tip"] is None
+
+
+def test_bowl_button_sets_mochis_bowl_for_the_rest_of_the_month(env):
+    from meow import db, mochi
+    user, today = _week_and_month(env)
+    env.conn.execute("update users set persona = 'plain'")
+    msg = env.say("/month")
+    rows = msg.markup["inline_keyboard"]
+    assert rows[1][0]["callback_data"] == "bowl:51200:2026-09-30" and "S$512.00/day" in rows[1][0]["text"]
+    env.press("bowl:51200:2026-09-30", msg.id)
+    state = db.mochi_state(env.conn, ME)
+    assert mochi.bowl_on(state, 60000, date(2026, 9, 30)) == 51200
+    assert mochi.bowl_on(state, 60000, date(2026, 9, 29)) == 2000          # not today
+    assert mochi.bowl_on(state, 60000, date(2026, 10, 1)) == 60000 // 31   # next month: back to normal
+    assert "Mochi's bowl is <b>S$512.00</b> a day from Wed 30 Sep to 30 Sep" in env.tg.sent[-1].text
+    assert env.tg.answers[-1] == "Bowl updated 🐱"
+    env.press("bowl:100:2026-09-29", msg.id)                              # an old button
+    assert "out of date" in env.tg.answers[-1]
+    env.say("/budget everyday 700")                                       # a new budget clears it
+    assert db.mochi_state(env.conn, ME)["bowl_override_minor"] is None
+
+
+def test_ai_suggestion_goes_under_the_tip_in_the_chat(env):
+    _week_and_month(env)
+    env.llm.replies += ["Good week.", "Take the MRT instead of Grab on short trips."]
     n = len(env.tg.sent)
     env.say("/recap")
     caption = env.tg.sent[n].text
-    assert "Most frequent" in caption and "Priciest day" in caption and "💡 Food &amp; Drinks grew" in caption
+    assert "💡 S$97.00 left" in caption and "🤖 <i>" in caption and "Take the MRT" in caption
+    prompt = env.llm.chats[-1]
+    assert "Needs are not for cutting" in prompt["system"]
+    assert "All Transport entries this period" in prompt["messages"][-1]["content"]
+    assert "rent" not in prompt["messages"][-1]["content"].split("Biggest everyday entries:")[1]
+    # Plain persona: no AI at all.
+    env.conn.execute("update users set persona = 'plain'")
+    calls = len(env.llm.chats)
+    env.say("/month")
+    assert len(env.llm.chats) == calls and "🤖" not in env.tg.sent[-1].text
 
 
 def test_caption_is_short_enough_for_telegram():
     from meow.bot import Bot
-    data = {"facts": ["🔁 Most frequent: “" + "x" * 900 + "” × 3"], "tip": "💡 " + "y" * 300}
-    cap = Bot.chart_caption(data, "head")
-    assert len(cap) <= 1024 and cap.startswith("head")
+    data = {"facts": ["💸 Biggest spend: " + "x" * 800], "tip": "💡 " + "y" * 100}
+    cap = Bot.chart_caption(data, "head", "z" * 300)
+    assert len(cap) <= 1024 and cap.startswith("head") and "zzz" not in cap   # the AI line goes first
+    assert "🤖" in Bot.chart_caption({"facts": ["a"], "tip": "b"}, None, "short")
     assert Bot.chart_caption({"facts": [], "tip": None}) is None
+
+
+def test_suggestion_none_and_errors_mean_no_line():
+    from types import SimpleNamespace
+    from meow import persona_llm
+
+    class Client:
+        def __init__(self, reply=None, fail=False):
+            self.reply, self.fail, self.messages = reply, fail, self
+
+        def create(self, **kwargs):
+            if self.fail:
+                raise RuntimeError("overloaded")
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=self.reply)], usage=None)
+
+    for reply in ("NONE", "none.", " NONE "):
+        assert persona_llm.suggest(Client(reply), "m", "en", "Tam", "facts")[0] is None
+    assert persona_llm.suggest(Client(fail=True), "m", "en", "Tam", "facts")[0] is None
+    assert persona_llm.suggest(Client("Book Grab less on Fridays."), "m", "vi", "Tam", "f")[0] == \
+        "Book Grab less on Fridays."

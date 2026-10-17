@@ -84,3 +84,32 @@ def react(client: Any, model: str, system: str, facts: str,
         return None, log
     finally:
         log.latency_ms = int((time.monotonic() - start) * 1000)
+
+
+# --- One practical suggestion under a report (M5) -------------------------------------------------
+
+SUGGEST_SYSTEM = """You read the spending summary of M.E.O.W., a Telegram money-tracking bot, and give
+{name} ONE practical, specific suggestion for the rest of the period (or the next one, if it is over).
+{name} is a young professional in Singapore who also spends in Vietnam.
+
+Rules:
+- Base it only on the facts given. Point at something that actually stands out: a category that rose,
+  a kind of entry that repeats, a day of the week, or the pace against the budget.
+- Needs are not for cutting: never tell them to eat less or cut meals, food or groceries in general,
+  rent, bills, phone, health, study or getting to work. Fair game: treats and extras, taxis where public
+  transport would do, impulse shopping, subscriptions, a single unusually pricey item.
+- If the facts show things are on track, say what is going well and a concrete way to keep it.
+- If nothing useful can be said, reply with exactly: NONE
+- Use only the numbers given, rounded naturally (S$45). Never invent amounts, dates or facts.
+- One or two short sentences, at most 35 words. Plain text, no markdown, no emoji, no lists.
+- No lecturing, no investment advice. Don't mention Mochi or being an AI.
+{language}"""
+
+
+def suggest(client: Any, model: str, language: str, name: str, facts: str) -> tuple[Optional[str], LLMCallLog]:
+    """One suggestion from the report's facts, or None (no client, an error, or nothing worth saying)."""
+    system = SUGGEST_SYSTEM.format(name=name or "the user", language=LANG.get(language, LANG["en"]))
+    text, log = react(client, model, system, facts, max_tokens=150)
+    if not text or text.strip().strip(".").upper() == "NONE":
+        return None, log
+    return text.strip(), log

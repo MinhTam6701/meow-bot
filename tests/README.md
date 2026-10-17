@@ -8,7 +8,7 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # by name
 ```
 
-**203 tests, 311 checks** (a test with several examples runs once per example).
+**207 tests, 315 checks** (a test with several examples runs once per example).
 
 ## `test_parser.py` · 12 tests, 82 checks
 
@@ -267,7 +267,7 @@ Mochi's pictures: the right one for her weight and day, uploaded once, sent with
 - picture failure falls back to text
 - nightly verdict comes with her picture
 
-## `test_charts.py` · 16 tests, 16 checks
+## `test_charts.py` · 20 tests, 20 checks
 
 Charts: the week or month as numbers, Telegram's signature on the Mini App, the pie picture, the buttons on every report.
 
@@ -285,5 +285,9 @@ Charts: the week or month as numbers, Telegram's signature on the Mini App, the 
 - scheduled recap and monthly report have charts
 - page route and menu button
 - api serves the page and guards the data
-- fun facts and tip for weeks and months
+- fun facts are logged days biggest spend and biggest changes
+- tip is the pace for the rest of the period
+- bowl button sets mochis bowl for the rest of the month
+- ai suggestion goes under the tip in the chat
 - caption is short enough for telegram
+- suggestion none and errors mean no line

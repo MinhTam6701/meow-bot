@@ -96,7 +96,9 @@ def test_monthly_report_and_balance_check(env):
     assert env.bot.run_tick(env.conn)["reports"] == 1
     rep = next(m for m in env.tg.sent if "monthly report" in m.text)
     assert "September 2026" in rep.text and "Spent <b>S$114.00</b>" in rep.text
-    assert "Top 3" in rep.text and "Fun facts" in rep.text and "“taxi” × 3" in rep.text
+    assert "Top 3" in rep.text and "Fun facts" in rep.text
+    assert "💸 Biggest spend: dinner S$30.00 (Thu 10 Sep)" in rep.text
+    assert "📈 Transport +S$72.00 vs last month" in rep.text
     assert env.bot.run_tick(env.conn).get("reports", 0) == 0   # once a month
 
     first = env.tg.sent[-1]

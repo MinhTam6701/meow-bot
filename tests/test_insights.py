@@ -132,7 +132,7 @@ def test_sunday_recap(env):
     assert "🗓 <b>Your week</b> · 21 Sep – 27 Sep" in recap and "Spent <b>S$14.00</b>" in recap
     assert "Logged on 1 of 7 days" in recap and "Solid week." in recap
     assert "hit your <b>Shopping</b> budget on the <b>29th</b>" in recap
-    assert "This is the weekly recap" in env.llm.chats[-1]["messages"][-1]["content"]
+    assert any("This is the weekly recap" in c["messages"][-1]["content"] for c in env.llm.chats)
     env.bot.run_tick(env.conn)
     assert len([m for m in env.tg.reactions if "Your week" in m]) == 1  # once per Sunday
     assert len(env.tg.sent) == before
@@ -219,7 +219,7 @@ def test_recap_early_in_the_week_compares_the_same_days(env):
     assert "Your week so far</b> · Mon 05 Oct (1 of 7 days)" in recap
     assert "vs last Monday" not in recap               # nothing last Monday: no misleading -97%
     assert "Logged on 1 of 1 day" in recap and "Mochi had" not in recap
-    assert "only just started" in env.llm.chats[-1]["messages"][-1]["content"]
+    assert any("only just started" in c["messages"][-1]["content"] for c in env.llm.chats)
 
 
 def test_pinned_message_follows_each_entry(env):

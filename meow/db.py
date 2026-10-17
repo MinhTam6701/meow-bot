@@ -618,6 +618,12 @@ def mochi_history(conn, user_id: int, days: int = 7) -> list[dict]:
 
 def set_everyday_budget(conn, user_id: int, minor: Optional[int]) -> None:
     conn.execute("update users set everyday_budget_minor = %s where telegram_id = %s", (minor, user_id))
+    set_bowl_override(conn, user_id, None, None)  # a new budget starts from the usual bowl again
+
+
+def set_bowl_override(conn, user_id: int, minor: Optional[int], since: Optional[date]) -> None:
+    conn.execute("update mochi_state set bowl_override_minor = %s, bowl_override_from = %s, updated_at = now() "
+                 "where user_id = %s", (minor, since, user_id))
 
 
 def set_awaiting(conn, user_id: int, value: Optional[str]) -> None:

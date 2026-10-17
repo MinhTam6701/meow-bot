@@ -30,38 +30,18 @@ def _totals(conn, uid: int, first: date, nxt: date) -> dict:
 
 
 def _top_expenses(conn, uid: int, first: date, nxt: date, n: int = 3) -> list[dict]:
+    """The biggest everyday entries: bills (rent, phone, study, fees) and auto-logged ones left out."""
     return conn.execute(
         """select t.description, -t.amount_home as amount, t.occurred_on, c.emoji
            from live_transactions t left join categories c on c.id = t.category_id
            where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
-             and t.amount_home is not null
+             and t.amount_home is not null and t.source <> 'recurring' and coalesce(c.name, '') <> all(%s)
            order by t.amount_home asc limit %s""",
-        (uid, first, nxt, n)).fetchall()
+        (uid, first, nxt, list(db.FIXED_CATEGORIES), n)).fetchall()
 
 
-def _habit(conn, uid: int, first: date, nxt: date) -> Optional[dict]:
-    """The thing you paid for most often."""
-    return conn.execute(
-        """select lower(t.description) as what, count(*) as n, -sum(t.amount_home)::bigint as total
-           from live_transactions t
-           where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
-             and t.source <> 'recurring' and t.amount_home is not null
-           group by 1 having count(*) >= 3 order by 2 desc, 3 desc limit 1""",
-        (uid, first, nxt)).fetchone()
-
-
-def _priciest_day(conn, uid: int, first: date, nxt: date) -> Optional[dict]:
-    """The day with the most everyday spending (bills like rent, logged by hand or not, don't count)."""
-    return conn.execute(
-        """select t.occurred_on as day, -sum(t.amount_home)::bigint as total
-           from transactions t left join categories c on c.id = t.category_id
-           where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
-             and t.source <> 'recurring' and coalesce(c.name, '') <> all(%s)
-           group by 1 order by 2 desc limit 1""",
-        (uid, first, nxt, list(db.FIXED_CATEGORIES))).fetchone()
-
-
-def build(conn, user: dict, first: date, persona_line: Optional[str] = None) -> str:
+def build(conn, user: dict, first: date, persona_line: Optional[str] = None,
+          today: Optional[date] = None) -> str:
     uid, home = user["telegram_id"], user["home_currency"]
     first, nxt = month_bounds(first)
     prev_first, _ = month_bounds(previous_month(first))
@@ -69,7 +49,6 @@ def build(conn, user: dict, first: date, persona_line: Optional[str] = None) -> 
     cats = [r for r in db.month_by_category_home(conn, uid, first, nxt) if r["type"] == "expense"]
     prev_cats = {r["category"]: -(r["total"] or 0)
                  for r in db.month_by_category_home(conn, uid, prev_first, first) if r["type"] == "expense"}
-    days_in_month = (nxt - first).days
 
     lines = [f"📊 <b>{first.strftime('%B %Y')}</b> · monthly report"]
     if persona_line:
@@ -122,43 +101,17 @@ def build(conn, user: dict, first: date, persona_line: Optional[str] = None) -> 
             lines.append(f"{'✅' if ok else '❌'} {label} {fmt(s, home)} / {fmt(b['limit_minor'], home)} "
                          f"({bud.pct(s, b['limit_minor'])}%)")
 
-    logged = len([d for d in db.logged_days(conn, uid, first) if d < nxt])
-    facts = [f"📅 You logged on {logged} of {days_in_month} days."]
-    habit = _habit(conn, uid, first, nxt)
-    if habit:
-        facts.append(f"🔁 Most frequent: “{escape(habit['what'])}” × {habit['n']} = {fmt(habit['total'], home)}.")
-    day = _priciest_day(conn, uid, first, nxt)
-    if day and day["total"]:
-        facts.append(f"🔥 Priciest day: {day['day'].strftime('%a %d %b')} ({fmt(day['total'], home)}).")
-    lines += ["", "<b>Fun facts</b>"] + facts
+    from . import report_data  # it builds on this module
+
+    data = report_data.build(conn, user, "month", first, today or date.today())
+    lines += ["", "<b>Fun facts</b>"] + [escape(f, quote=False) for f in data["facts"]]
 
     patterns = insights.best_for_report(conn, user, nxt - timedelta(days=1))
     if patterns:
         lines += ["", "<b>Patterns</b>"] + patterns
 
-    tip = _tip(cats, prev_cats, spent, everyday, home)
-    if tip:
-        lines += ["", f"💡 {tip}"]
+    if data["tip"]:
+        lines += ["", escape(data["tip"], quote=False)]
     if cur["unconverted"]:
         lines.append(f"⏳ {cur['unconverted']} entries had no exchange rate and aren't in the totals.")
     return "\n".join(lines)
-
-
-def _tip(cats: list[dict], prev_cats: dict, spent: int, everyday: Optional[int], home: str,
-         compared_with: str = "last month", min_growth: int = 2000) -> Optional[str]:
-    """One concrete suggestion: the everyday category that grew the most (by at least `min_growth`)."""
-    skip = {"Housing", "Phone", "Subscriptions & Fees", "Education"}
-    best = None
-    for r in cats:
-        before = prev_cats.get(r["category"], 0)
-        amt = -(r["total"] or 0)
-        if r["category"] in skip or before <= 0:
-            continue
-        growth = amt - before
-        if growth > 0 and (best is None or growth > best[1]):
-            best = (r["category"], growth, amt)
-    if best and best[1] >= min_growth:
-        level = "last month's level" if compared_with == "last month" else "that level"
-        return (f"{escape(best[0])} grew by {fmt(best[1], home)} vs {compared_with}. "
-                f"Cutting it back to {level} is the quickest saving.")
-    return None

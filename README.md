@@ -95,8 +95,17 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 
 ### Charts
 `/month`, `/report` and `/recap` (and the Sunday recap and the report on the 1st) arrive as one **pie picture**
-with a **📊 See charts** button under it. The caption has the persona's line, fun facts (days logged, most
-frequent purchase, priciest day without bills) and one tip (the everyday category that grew most). The text version is only sent
+with a **📊 See charts** button under it. The caption has:
+- the persona's line (recap) or the report heading;
+- **fun facts**: days logged, the biggest spend (bills left out), and the everyday category that rose most
+  and the one that fell most, in money, vs the same days of the last period (moves under S$10 left out);
+- **💡 the pace** (code): what's left of the everyday budget (a week gets budget × 7 ÷ days in the month)
+  and what that is per day from tomorrow; a finished period says how it ended. On the current month a
+  **🐱 Set Mochi's bowl to S$x/day** button makes that her bowl until the month ends (a new everyday budget
+  resets it; `mochi_state.bowl_override_*`);
+- **🤖 one suggestion** (AI, chat only, not with the Plain persona): Claude gets the numbers above and the
+  entries behind them, and may not suggest cutting needs (meals, groceries, rent, bills, phone, health,
+  study, getting to work). It answers NONE when nothing stands out. The Mini App shows only the code parts. The text version is only sent
 when there's nothing to draw or the picture fails. The button opens a page inside Telegram (a Mini App) with:
 - **Week / Month** tabs and ‹ › to go back to any week or month since your first entry;
 - spent (vs the same days of the last period), income, net, and the **savings rate** (months only: salary
@@ -185,7 +194,7 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/insights.py`, `meow/ask.py` | Patterns and the weekly recap; answering questions |
 | `meow/report_data.py`, `meow/report_picture.py` | A week or month as numbers; the pie picture (Pillow, Inter font in `assets/fonts/`) |
 | `meow/webapp.py`, `meow/webapp/report.html` | The charts Mini App: signature check, data, page |
-| `supabase/migrations/` | Database schema, applied in order (0001 to 0011 are on your project) |
+| `supabase/migrations/` | Database schema, applied in order (0001 to 0012 are on your project) |
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
 
@@ -271,7 +280,7 @@ select source, parser, count(distinct batch_id) from transactions where reverses
 
 ## Testing
 
-**203 tests, 311 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
+**207 tests, 315 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
 which is why there are more checks than tests. `tests/README.md` lists every test by name.
 
 ### Two kinds of test
@@ -306,7 +315,7 @@ and `eval_*` scripts, and one test checks that every Claude call matches the rea
 | `test_balance.py` | Both | `/balance DBS`, “what is my DBS balance?”, other currencies, unknown wallets | 6 |
 | `test_subscriptions.py` | Both | Detection rules (intervals, ±5%, stale, habits, month ends); daily job, buttons, reminders, price changes, quarterly check, `/subscriptions`, failed sends | 28 |
 | `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 20 |
-| `test_charts.py` | Both | Periods and pie slices, Telegram's signature, the data route, the picture, buttons on every report | 16 |
+| `test_charts.py` | Both | Periods and pie slices, Telegram's signature, the data route, the picture, buttons on every report | 20 |
 | `test_mochi_art.py` | Both | Which picture for her weight and day, upload once and reuse, grandma's, fallback to text, nightly verdict | 7 |
 
 ### Running them
@@ -316,8 +325,8 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **147 passed, 164 skipped**: the end-to-end tests skip.
-To run all 311, install Postgres 16, create an empty database, and set for example
+Without `TEST_DATABASE_URL` you'll see about **148 passed, 167 skipped**: the end-to-end tests skip.
+To run all 315, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.

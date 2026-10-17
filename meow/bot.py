@@ -405,7 +405,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             return None
         s = self.streak(conn, uid, today).current
         return mochi.status_line(state["weight"], state["away"], db.spent_for_mochi(conn, uid, today),
-                                 mochi.bowl(budget, today), user["home_currency"],
+                                 mochi.bowl_on(state, budget, today), user["home_currency"],
                                  no_spend_marked=db.no_spend_marked(conn, uid, today),
                                  accessory=streaks.accessory(s), streak=s)
 
@@ -419,9 +419,11 @@ class Bot(PhotoFlow, SubscriptionFlow):
         st = self.streak(conn, uid, today)
         hist = db.mochi_history(conn, uid, 7)
         week = " ".join(f"{mochi.RESULTS[h['result']]:+d}" for h in reversed(hist)) or "no days scored yet"
-        bowl = mochi.bowl(user["everyday_budget_minor"], today)
+        bowl = mochi.bowl_on(state, user["everyday_budget_minor"], today)
+        how = ("your pace for the rest of the month" if bowl != mochi.bowl(user["everyday_budget_minor"], today)
+               else "everyday budget ÷ days in the month")
         return (f"🐱 <b>Mochi</b>\n\n{line}\n\n"
-                f"Daily bowl: {fmt(bowl, user['home_currency'])} (everyday budget ÷ days in the month)\n"
+                f"Daily bowl: {fmt(bowl, user['home_currency'])} ({how})\n"
                 "Housing, phone, subscriptions, study and anything tagged #planned don't count.\n"
                 f"Last 7 days: {week}\n"
                 f"Streak: {st.current} days · best {st.best}"
@@ -467,7 +469,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         logged = db.logged_days(conn, uid, day - timedelta(days=1))
         while day < today:
             spent = db.spent_for_mochi(conn, uid, day)
-            bowl = mochi.bowl(budget, day)
+            bowl = mochi.bowl_on(state, budget, day)
             result = mochi.result_for(spent, bowl, day in logged)
             last = mochi.score(weight, away, result, db.recent_mochi_results(conn, uid))
             if db.save_mochi_day(conn, uid, day, spent, bowl, last):
@@ -636,7 +638,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         budget = user.get("everyday_budget_minor")
         state = db.mochi_state(conn, uid) if budget else None
         if state:
-            bowl = mochi.bowl(budget, today)
+            bowl = mochi.bowl_on(state, budget, today)
             used = db.spent_for_mochi(conn, uid, today)
             left = bowl - used
             lines.append(f"Daily allowance for everyday spending: {fmt(bowl, home)}; "
@@ -1339,7 +1341,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         elif args.strip().lower() in ("this", "now", "current"):
             month = today.replace(day=1)
         if not self.send_chart(conn, user, chat_id, "month", month):
-            self.tg.send_message(chat_id, report.build(conn, user, month), self.chart_button("month", month))
+            self.tg.send_message(chat_id, report.build(conn, user, month, today=today), self.chart_button("month", month))
 
     def cmd_check(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]
@@ -1384,15 +1386,30 @@ class Bot(PhotoFlow, SubscriptionFlow):
             self.tg.send_message(chat_id, body, charts)
 
     @staticmethod
-    def chart_caption(data: dict, head: Optional[str] = None) -> Optional[str]:
-        """Under the picture: the heading or persona line, the fun facts and the one tip."""
+    def chart_caption(data: dict, head: Optional[str] = None, suggestion: Optional[str] = None) -> Optional[str]:
+        """Under the picture: the heading or persona line, the fun facts, the pace tip and the AI's suggestion."""
         parts = [head] if head else []
         if data.get("facts"):
             parts.append("\n".join(escape(f, quote=False) for f in data["facts"]))
-        if data.get("tip"):
-            parts.append(escape(data["tip"], quote=False))
+        tips = [escape(data["tip"], quote=False)] if data.get("tip") else []
+        if suggestion:
+            tips.append(f"🤖 <i>{escape(suggestion, quote=False)}</i>")
+        if tips:
+            parts.append("\n".join(tips))
         text = "\n\n".join(parts)
-        return text[:1020] if text else None  # Telegram allows 1024 characters in a caption
+        if len(text) > 1024 and suggestion:  # Telegram's caption limit: the suggestion goes first
+            return Bot.chart_caption(data, head)
+        return text[:1020] if text else None
+
+    def ai_suggestion(self, conn, user: dict, data: dict) -> Optional[str]:
+        """One practical suggestion written by the AI from facts code worked out (chat only, never the page)."""
+        if user["persona"] not in PERSONA_ICON or not self.llm_ok(conn, user["telegram_id"]):
+            return None
+        text, call = persona_llm.suggest(self.llm, self.s.persona_model, user["language"],
+                                         user.get("first_name") or "", report_data.suggestion_facts(data))
+        db.log_llm_call(conn, user["telegram_id"], "tip", call,
+                        cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
+        return text
 
     def chart_button(self, kind: str, day: date) -> dict:
         return webapp.chart_button(self.s.public_url, kind, report_data.bounds(kind, day)[0])
@@ -1409,12 +1426,41 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 return None
             from . import report_picture  # Pillow is only needed here (scripts import bot.py without it)
 
-            return self.tg.send_photo(chat_id, report_picture.render(data), caption=self.chart_caption(data, caption),
-                                      filename="report.png", silent=silent,
-                                      reply_markup=self.chart_button(kind, day))
+            picture = report_picture.render(data)
+            suggestion = self.ai_suggestion(conn, user, data)
+            markup = self.chart_button(kind, day)
+            offer = data.get("bowl_offer")
+            if offer:
+                markup["inline_keyboard"].append(
+                    [{"text": offer["text"], "callback_data": f"bowl:{offer['minor']}:{offer['from']}"}])
+            return self.tg.send_photo(chat_id, picture, caption=self.chart_caption(data, caption, suggestion),
+                                      filename="report.png", silent=silent, reply_markup=markup)
         except Exception:
             log.exception("chart picture not sent")
             return None
+
+    def on_bowl_button(self, conn, uid: int, rest: str, chat_id: int, message_id: int) -> str:
+        """"Set Mochi's bowl to S$14.10/day": from tomorrow to the end of this month."""
+        user = db.get_user(conn, uid)
+        minor, _, since = rest.partition(":")
+        today = self.today_for(user)
+        try:
+            minor, since = int(minor), date.fromisoformat(since)
+        except ValueError:
+            return "That button is broken."
+        if not user.get("everyday_budget_minor") or not db.mochi_state(conn, uid):
+            return "Set an everyday budget first: /budget everyday 600"
+        if since <= today or (since.year, since.month) != (today.year, today.month) or minor <= 0:
+            return "That pace is out of date. Send /month for a fresh one."
+        db.set_bowl_override(conn, uid, minor, since)
+        last = (since.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        self.tg.edit_message_reply_markup(chat_id, message_id, self.chart_button("month", today))
+        home = user["home_currency"]
+        self.tg.send_message(chat_id, f"🐱 Mochi's bowl is <b>{fmt(minor, home)}</b> a day from "
+                                      f"{since.strftime('%a %d %b')} to {last.strftime('%d %b')}. "
+                                      f"Next month it goes back to your everyday budget ÷ days.")
+        self.refresh_pinned(conn, user, today, create=False)
+        return "Bowl updated 🐱"
 
     def cmd_recap(self, conn, user, chat_id, args, **_):
         self.send_recap(conn, user, chat_id, self.today_for(user))
@@ -1433,7 +1479,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
             f"\n<i>{escape(said, quote=False)}</i>" if said else "")
         sent = self.send_chart(conn, user, uid, "month", month, caption=caption)
         if not sent:
-            sent = self.tg.send_message(uid, report.build(conn, user, month, said), self.chart_button("month", month))
+            sent = self.tg.send_message(uid, report.build(conn, user, month, said, today=local.date()),
+                                        self.chart_button("month", month))
         if sent:
             db.set_report_message(conn, uid, month, sent["message_id"])
         check_month = local.date().replace(day=1)
@@ -1596,6 +1643,9 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
             elif action in ("pers", "roast", "lang"):
                 note = self.on_setting_button(conn, uid, action, rest, chat_id, message_id)
+
+            elif action == "bowl":
+                note = self.on_bowl_button(conn, uid, rest, chat_id, message_id)
             else:
                 note = "Unknown button."
         finally:
