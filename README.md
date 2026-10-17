@@ -21,7 +21,7 @@ left is too patchy to say where the money went.
 
 It's worse when your life runs in **two currencies**. A Vietnamese professional in Singapore pays in SGD,
 sends and spends VND at home, and moves money between banks in both countries. Amounts like `65k`, `1tr2`
-or "50 nghìn" don't fit English-only apps, exchange rates turn every total into guesswork, and bank
+or Vietnamese spoken numbers don't fit English-only apps, exchange rates turn every total into guesswork, and bank
 screenshots in two languages pile up unlogged.
 
 **Who has it:** young professionals and students living across two countries (here: Singapore and Vietnam)
@@ -32,8 +32,8 @@ entry, in the app you already have open all day, is one you'll still use in mont
 
 ## Solution overview
 
-M.E.O.W. lives in **Telegram**, so logging is just texting: `pho 65k`, `grab 12.5 yesterday`, a voice note
-("ăn trưa 50 nghìn, Vietcombank") or a screenshot of a bank transfer. Simple messages are read instantly by
+M.E.O.W. lives in **Telegram**, so logging is just texting: `pho 65k`, `grab 12.5 yesterday`, a voice note in English or
+Vietnamese ("lunch, 50 thousand dong, Vietcombank") or a screenshot of a bank transfer. Simple messages are read instantly by
 rules; only unclear ones go to Claude. Every entry comes back as a card you can undo or correct in one tap,
 and corrections teach it your categories.
 
@@ -73,7 +73,7 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 | Feature | What it does |
 |---|---|
 | **Chat logging** | `pho 65k`, `coffee 6, lunch 14`, `salary 4200 to DBS`. SGD/VND detection (`65k`, `1tr2`, `30tr160k`), dates, wallets, several items per message |
-| **Voice notes** | English, Vietnamese or mixed, up to 2 minutes; spoken amounts ("1 triệu 2", "12 dollars 50") are normalised before parsing |
+| **Voice notes** | English, Vietnamese or mixed, up to 2 minutes; spoken amounts ("1.2 million" said in Vietnamese, "12 dollars 50") are normalised before parsing |
 | **Photos & screenshots** | Receipts, bank apps, card notifications, Shopee orders. Clear payments are logged; duplicates, money to people, transfers to yourself and amounts ≥ S$500 are asked about first |
 | **Transfers** | `move 500 from DBS to VP as 9.8tr`: cross-currency moves with a typo guard against today's rate |
 | **Learning** | Correct a shop's category twice and it's remembered |
@@ -97,7 +97,7 @@ short text from facts code computed.
 |---|---|---|---|
 | **Parsing text** (`parser_llm.py`) | Claude Haiku 4.5, forced tool call | Only for messages the rules can't read (~27% in real use): returns entries (amount, currency, type, category, date) | Rules run first; output is validated by Pydantic against your real categories/wallets; your learned phrases override its category; bad output becomes a question, never a crash |
 | **Your history as context** | same | Gets up to a handful of your similar past entries as examples | Picks them from your ledger by phrase match |
-| **Voice notes** (`speech.py`) | Groq `whisper-large-v3` | Speech → text, with your wallet names as a spelling hint | Spoken amounts normalised ("50 nghìn" → 50k), then the same parser as text |
+| **Voice notes** (`speech.py`) | Groq `whisper-large-v3` | Speech → text, with your wallet names as a spelling hint | Spoken amounts normalised (Vietnamese "50 thousand" → 50k), then the same parser as text |
 | **Photos** (`vision.py`, `photo_flow.py`) | Claude Haiku 4.5 vision, forced tool call | Reads amount paid, date, bank, counterparty, category | Scrubs account/card/phone numbers; checks duplicates (±1 day, ±7 if undated), your own name, people vs businesses, big amounts → asks before saving |
 | **Transfers** (`transfers.py`) | Claude Haiku 4.5, forced tool call | Reads wording the rules miss | Rejects received amounts far from today's exchange rate |
 | **Questions** (`ask.py`) | Claude Haiku 4.5, forced tool call | Turns a question into a filter (words, categories, wallets, dates, grouping) | Runs the query and does the sums; shows the filter so mistakes are visible |
@@ -203,7 +203,7 @@ $$);
   Claude down, Groq down, silence, duplicate updates, strangers, tampered or expired Mini App signatures,
   and privacy scrubbing (`test_photos.py`).
 - **Regression rule:** every bug found in real use becomes a test with the real input first (e.g. a
-  Whisper transcript "Game 33 nghìn, Vietcombank.", a Shopee screenshot read with today's date, `30tr160k`).
+  Whisper transcript with a Vietnamese amount and the bank name after a comma, a Shopee screenshot read with today's date, `30tr160k`).
 - **Accuracy:** `scripts/eval_parser.py` runs 52 sample messages through rules + Claude; the rules alone get
   all 49 they claim, and 3 are left for Claude. `scripts/eval_history.py` replays your last 3 months.
   `scripts/try_photo.py` shows what Claude reads from real screenshots without saving anything.
@@ -243,17 +243,17 @@ changes all use it, so they never disagree. Everything else counts as "bills".
 | `pho 65k`, `grab 12.5 yesterday`, `coffee 6, lunch 14` | Rules read it instantly; Claude only when the rules aren't sure |
 | `salary 4200 to DBS`, `+50 refund` | Income |
 | `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr` | Transfer between wallets (not spending). Also `transfer vp to dbs 30tr160k to 1471.2`; wording the rules miss goes to Claude, and a received amount far from today's rate is refused as a likely typo. `withdraw` uses the cash wallet you already have in that currency, whatever its name |
-| A voice note: “ăn trưa 50 nghìn, Vietcombank” | Transcribed (🎙 shown on the card), then read like text |
+| A voice note in English or Vietnamese: “lunch, 50 thousand dong, Vietcombank” | Transcribed (🎙 shown on the card), then read like text |
 | A receipt, bank-app screenshot, card notification or Shopee order | Read by Claude (📸 on the card); see [Photos](#photos) |
 | `45` right after the evening reminder | That day's total |
 | `#planned` in a message or photo caption | Not everyday spending: kept out of Mochi's bowl, the everyday budget, the pace and the pie (shown with bills) |
-| “how much on Grab in August?”, “tháng này tiêu bao nhiêu cho ăn uống?” | A question: answered from your own entries (see [Questions](#questions)) |
+| “how much on Grab in August?”, “how much on food this month?” (in English or Vietnamese) | A question: answered from your own entries (see [Questions](#questions)) |
 
 ### Amounts and currencies
 - Plain numbers under 10,000 are **SGD** (`grab 12.5`); 10,000 or more are **VND**.
-- `65k`, `65.000`, `1tr2` (1.2 million), `2m`, `đ` are **VND**. An explicit currency wins: `$5`, `5 usd`, `120000 vnd`.
-- Spoken or written-out forms work too: “50 nghìn” = 50k, “1 triệu 2” = 1.2 million, “2 triệu rưỡi” = 2.5 million,
-  “12 dollars 50 cents” = S$12.50, “5 US dollars” = US$5.
+- `65k`, `65.000`, `1tr2` (Vietnamese shorthand for 1.2 million), `2m` and the dong sign are **VND**. An explicit currency wins: `$5`, `5 usd`, `120000 vnd`.
+- Spoken or written-out forms work too, in English or Vietnamese: “50 thousand” = 50k, “one million two” = 1.2 million,
+  “two and a half million” = 2.5 million, “12 dollars 50 cents” = S$12.50, “5 US dollars” = US$5.
 - Each currency goes to its default wallet (`/wallet default VCB`) unless you name one (`pho 65k VP`, `…, Vietcombank`).
   A new currency gets a `Cash XXX` wallet. Every entry also stores its SGD value at that day's rate.
 
@@ -344,7 +344,7 @@ there also stops it logging. Move one with `/recurring sub 3` / `/recurring bill
 
 Every day from 10:00 the bot looks for **the same thing at a similar price (±5%) at a regular interval,
 at least twice**: weekly (3 times), monthly, quarterly or yearly, with the latest charge still recent.
-Month words and numbers are ignored, so “Tiền điện thoại tháng 9” and “… tháng 10” match. Food, groceries and
+Month words and numbers are ignored, so “Phone bill September” and “Phone bill October” match. Food, groceries and
 transport are habits, not subscriptions, and bills that already log themselves (`/recurring`) are skipped.
 
 | When | What you get |
@@ -363,11 +363,11 @@ Found by plain statistics (Claude only writes the persona line):
 The best patterns also appear in the monthly report.
 
 ### Questions
-Ask in English, Vietnamese or both: “how much on Grab in August?”, “show me this month by category”,
-“bao nhiêu tiền phở tháng 9”. Claude turns the question into a filter (words, categories, wallets, dates,
+Ask in English or Vietnamese: “how much on Grab in August?”, “show me this month by category”,
+“how much on pho in September?”. Claude turns the question into a filter (words, categories, wallets, dates,
 total / list / by category / by month / by wallet); **the bot's code finds the entries and adds them up**.
 The reply shows the filter it used, so a misunderstanding is easy to spot. Entries like “lunch 12?”,
-“total 45” or “mình đã mua sách 200k” are still logged, and right after the persona speaks, “haha really?”
+“total 45” or “I bought books 200k” are still logged, and right after the persona speaks, “haha really?”
 is chat, not a lookup.
 
 **Privacy:** photos are not stored. Account, card and phone numbers and reference codes are removed
@@ -383,7 +383,7 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/bot.py` | Messages, commands, buttons and the scheduled tick |
 | `meow/parser_rules.py`, `meow/parser.py` | Rule parser for simple messages; rules-then-Claude entry point |
 | `meow/parser_llm.py` | Claude fallback with forced tool calling |
-| `meow/money.py` | Amount reading (`65k`, `1tr2`, `65.000`, “50 nghìn”), minor units, formatting |
+| `meow/money.py` | Amount reading (`65k`, `1tr2`, `65.000`, spoken amounts), minor units, formatting |
 | `meow/transfers.py` | Wallet transfers |
 | `meow/fx.py` | Daily exchange rates and SGD conversion |
 | `meow/persona_llm.py` | The persona's reply to each entry (Claude) |
@@ -516,6 +516,6 @@ To run all 319, install Postgres 16, create an empty database, and set for examp
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.
 
 ### Adding a test
-Each bug found in real use gets a test with the real input, e.g. Whisper's “Game 33 nghìn, Vietcombank.”
+Each bug found in real use gets a test with the real input, e.g. a Whisper transcript with a Vietnamese amount and the bank name after a comma
 or a Shopee screenshot read with today's date. Copy a nearby test, use `env.say("…")` to send text,
 `env.press(button, message_id)` to tap a button, and check the reply or the database.
