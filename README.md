@@ -2,11 +2,13 @@
 
 A private Telegram bot that tracks money from **chat messages, voice notes and payment screenshots**,
 in SGD and VND. Every entry gets a confirm card (OK / Undo / Category / Wallet) and a short reply from
-your persona. Mochi the cat lives on your daily allowance, a streak rewards logging every day, and on
-the 1st you get a monthly report and a wallet-by-wallet balance check.
+your persona. Mochi the cat lives on your daily allowance, a streak rewards logging every day, reports come
+as a pie picture with a charts page inside Telegram, and on the 1st you get a monthly report and a
+wallet-by-wallet balance check. **How to use it:** the user guide in the Project (*M.E.O.W. — User guide*).
 
 **Status:** M1–M4 done: chat, voice and photo logging; personas; budgets; Mochi; streak; monthly report and
 balance check; subscription detector; weekly recap, patterns and questions about your spending.
+M5 in progress: charts (pie picture + Mini App), new fun facts, pace tip, Mochi's bowl at your pace, AI suggestion.
 
 ```
 Telegram ──webhook──▶ Vercel (FastAPI, api/index.py) ──▶ meow/bot.py
@@ -17,9 +19,11 @@ Telegram ──webhook──▶ Vercel (FastAPI, api/index.py) ──▶ meow/bo
                               │
                               ├─ ledger: Supabase Postgres (append-only, integer minor units, SGD amount per entry)
                               ├─ confirm card ─▶ Telegram
-                              └─ persona reply (Claude, facts computed by code) ─▶ Telegram
+                              ├─ persona reply (Claude, facts computed by code) ─▶ Telegram
+                              └─ reports: report_data.py ─▶ pie picture (Pillow) + 📊 button ─▶ Telegram
+Mini App (GET ?view=charts) ─▶ page ─▶ POST + Telegram signature ─▶ report_data.py ─▶ JSON (your numbers only)
 
-Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, reminders, Mochi, monthly report
+Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, reminders, Mochi, reports, recap
 ```
 
 **One rule for "everyday spending"** (`db.EVERYDAY`): expenses outside the bill categories (Housing,
@@ -60,19 +64,19 @@ changes all use it, so they never disagree. Everything else counts as "bills".
 ### Commands
 | Command | What it does |
 |---|---|
-| `/today`, `/month` | Today's entries; this month by category (in SGD) |
+| `/today`, `/month` | Today's entries; this month as a pie picture with fun facts, the pace tip and the 📊 charts button |
 | `/balance`, `/balance DBS`, "what is my DBS balance?", `/setbalance DBS 2340.50` | All balances, or one wallet with its latest entries; correct one (the gap is recorded as an adjustment) |
 | `/wallet` | List wallets · `add GrabPay SGD ewallet` · `default Cash` · `check DBS VPBank VCB` (which wallets the monthly check covers) |
 | `/budget` | `Food 400`, `total 1600`, `everyday 600` (Mochi's allowance), `Food off` |
 | `/recurring` | Bills you need, logged automatically: `add rent 800 on 1`, `stop 2`; `sub 3` moves one to subscriptions, `bill 3` back |
 | `/rules` | Categories learned from your corrections; `forget grab` |
 | `/persona`, `/roast`, `/language` | Sassy Cat, Asian Mom, Zen Monk or Plain; roast 0–3; EN, VI or mix |
-| `/remind 21:30` | Evening check-in time (only sent if nothing was logged) |
+| `/remind 21:30` | Evening check-in time (only sent if nothing was logged) · `off` · `on` · `pause 7` |
 | `/mochi`, `/streak` | How Mochi is doing; your logging streak |
-| `/report`, `/report 2026-09` | Monthly report |
+| `/report`, `/report 2026-09`, `/report this` | Last month's (or that month's) report as a picture |
 | `/check` | Balance check now |
 | `/subscriptions` | Nice-to-haves (iQIYI, Claude…) and their monthly total, incl. ones that log themselves · `scan` · `add Netflix 17.98 monthly` · `stop 2` |
-| `/recap` | This week so far, with patterns (also sent Sundays at 20:00) |
+| `/recap` | This week so far as a picture (also sent Sundays at 20:00) |
 | `/myname Trinh Minh Tam` | Your name as banks print it (spots transfers to yourself in screenshots) |
 | `/undo`, `/settings`, `/help` | |
 
@@ -86,15 +90,15 @@ changes all use it, so they never disagree. Everything else counts as "bills".
 | M2 | Budgets | Per category and total; alerts on the card at 80% and 100% |
 | M2 | Personas | The persona replies to each entry in its own message (Claude). Code gives it the facts: your usual price for that item, today's spending, your allowance, budget alerts. It questions odd prices, and you can answer it within 30 minutes. If Claude is down, a pre-written line is used. Plain = no replies |
 | M2.1 | Your history | Money Manager import (1 year), English categories incl. Groceries, recurring bills |
-| M3 | Mochi 🐱 | Daily bowl = everyday budget ÷ days in month. Scored after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2. At 0 she goes to grandma's; 3 good days bring her back. Rent, bills, phone, subscriptions, study, recurring entries and `#planned` don't count |
+| M3 | Mochi 🐱 | Daily bowl = everyday budget ÷ days in month (or your pace, if you tap "Set Mochi's bowl" under `/month`). Scored after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2. At 0 she goes to grandma's; 3 good days bring her back. Only everyday spending counts (see the rule above) |
 | M4 | Mochi's pictures | Seven still pictures, sent only with `/mochi` and the nightly verdict (never pinned): skinny below 40, neutral 40–69, fat 70–89, king from 90; sleeping after a no-spend day, sad after a bad day, an empty cushion while she's at grandma's. Art in `assets/mochi/`; each picture is uploaded to Telegram once and reused (`media` table). Replace a file to change the art |
 | M3 | Streak 🔥 | A day counts if you log or mark no-spend. One freeze a week (after 5 of 7 logged days). Milestones 3, 7, 14, 30, 100 with 🔔🧣👑 |
-| M3 | Monthly report | 1st at 09:00: totals vs last month, categories with trends, top 3, budget scorecard, fun facts, one tip |
+| M3 | Monthly report | 1st at 09:00, as a pie picture (see [Charts](#charts)); the text version (totals vs last month, categories with trends, top 3, budget scorecard, fun facts, the tip) only if the picture fails |
 | M3 | Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (gap becomes an adjustment) / skip |
 | M4 | Photos | See below |
 | M4 | Voice | Groq Whisper (`whisper-large-v3`), English, Vietnamese or mixed, up to 2 minutes. Your wallet names are given as a spelling hint |
 | M4 | Subscriptions | See below |
-| M4 | Weekly recap & patterns | Sundays 20:00: the week vs last week and your 4-week average, top categories, days logged, Mochi's good days, patterns, renewals coming up, and one line from your persona. `/recap` any time |
+| M4 | Weekly recap & patterns | Sundays 20:00, as a pie picture with your persona's line, fun facts, the pace tip and an AI suggestion. Patterns are on the charts page. The 4-week average and "renewing this week" are only in the text version (sent if the picture fails); renewals still get their own reminder 2 days before. `/recap` any time |
 | M4 | Questions | See below |
 | M5 | Charts 📊 | See [Charts](#charts) |
 
