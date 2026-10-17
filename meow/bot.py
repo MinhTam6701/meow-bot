@@ -534,7 +534,12 @@ class Bot(PhotoFlow, SubscriptionFlow):
         return rows, None
 
     def cash_wallet(self, conn, uid: int, ctx: ParseContext, currency: str, home: str) -> WalletInfo:
-        """Find or create a cash wallet: "Cash" for the home currency, "Cash VND" etc. otherwise."""
+        """Find or create a cash wallet: any cash wallet in that currency you already have (whatever its
+        name), else a new "Cash" for the home currency, "Cash VND" etc. otherwise."""
+        found = db.find_cash_wallet(conn, uid, currency)
+        match = next((w for w in ctx.wallets if w.id == found), None) if found else None
+        if match:
+            return match
         name = "Cash" if currency == home else f"Cash {currency}"
         existing = ctx.wallet_by_name(name)
         if existing and existing.currency == currency:
@@ -800,7 +805,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         r_dst = self.home_rate(conn, home, dst, day)
         if not r_src or not r_dst:
             return None
-        return fx.convert(minor, src, dst, home, r_src, r_dst)
+        return fx.convert(minor, src, dst, r_src, r_dst)
 
     # ------------------------------------------------------------------ commands
     def cmd_start(self, conn, user, chat_id, args, created=False):
@@ -1743,6 +1748,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             for home in homes or {self.s.home_currency}:
                 stats["fx"] = fx.ensure_rates(conn, home, now.date(), self.fx_fetch) or stats["fx"]
             stats["backfilled"] = fx.backfill(conn)
+            db.prune_processed_updates(conn)
         stats["recurring"] = 0
         # Inside a transaction block: a bare query here would open a transaction that is never committed,
         # turning every block below into a savepoint that is thrown away when the connection closes.

@@ -205,6 +205,13 @@ def test_caption_reaches_the_model(env):
     assert env.conn.execute("select raw_message from transactions").fetchone()["raw_message"] == "[photo] split with Minh"
 
 
+def test_planned_in_the_caption_keeps_it_out_of_everyday(env):
+    env.say("/start")
+    photo(env, pay("899.00", desc="Apple Store"), caption="new laptop #planned")
+    item = env.conn.execute("select entry from pending_items").fetchone()   # big amount: asks first
+    assert item["entry"]["description"] == "Apple Store #planned"
+
+
 def test_numbers_are_scrubbed_before_saving_or_logging(env):
     env.say("/start")
     photo(env, pay("92.00", desc="PayNow 272-644799-9", who="SIX GUO +65 83832159", kind="person",

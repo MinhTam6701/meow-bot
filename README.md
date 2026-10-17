@@ -22,6 +22,11 @@ Telegram ──webhook──▶ Vercel (FastAPI, api/index.py) ──▶ meow/bo
 Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, reminders, Mochi, monthly report
 ```
 
+**One rule for "everyday spending"** (`db.EVERYDAY`): expenses outside the bill categories (Housing,
+Phone, Subscriptions & Fees, Education), not logged automatically by a recurring bill, and not tagged
+`#planned`. Mochi's bowl, the everyday budget, the pace tip, the pie, the biggest spend and the biggest
+changes all use it, so they never disagree. Everything else counts as "bills".
+
 **Principles**
 - **The AI proposes, code decides.** Claude only turns text or pictures into structured data and writes the
   persona's words. Amounts, totals, budgets and exchange rates are plain, tested code.
@@ -37,11 +42,11 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 |---|---|
 | `pho 65k`, `grab 12.5 yesterday`, `coffee 6, lunch 14` | Rules read it instantly; Claude only when the rules aren't sure |
 | `salary 4200 to DBS`, `+50 refund` | Income |
-| `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr` | Transfer between wallets (not spending). Also `transfer vp to dbs 30tr160k to 1471.2`; wording the rules miss goes to Claude, and a received amount far from today's rate is refused as a likely typo |
+| `move 200 from DBS to Cash`, `withdraw 100 from DBS`, `move 500 from DBS to VP as 9.8tr` | Transfer between wallets (not spending). Also `transfer vp to dbs 30tr160k to 1471.2`; wording the rules miss goes to Claude, and a received amount far from today's rate is refused as a likely typo. `withdraw` uses the cash wallet you already have in that currency, whatever its name |
 | A voice note: “ăn trưa 50 nghìn, Vietcombank” | Transcribed (🎙 shown on the card), then read like text |
 | A receipt, bank-app screenshot, card notification or Shopee order | Read by Claude (📸 on the card); see [Photos](#photos) |
 | `45` right after the evening reminder | That day's total |
-| `#planned` in a message | Doesn't count against Mochi's bowl |
+| `#planned` in a message or photo caption | Not everyday spending: kept out of Mochi's bowl, the everyday budget, the pace and the pie (shown with bills) |
 | “how much on Grab in August?”, “tháng này tiêu bao nhiêu cho ăn uống?” | A question: answered from your own entries (see [Questions](#questions)) |
 
 ### Amounts and currencies
@@ -280,7 +285,7 @@ select source, parser, count(distinct batch_id) from transactions where reverses
 
 ## Testing
 
-**207 tests, 315 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
+**211 tests, 319 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
 which is why there are more checks than tests. `tests/README.md` lists every test by name.
 
 ### Two kinds of test
@@ -309,13 +314,13 @@ and `eval_*` scripts, and one test checks that every Claude call matches the rea
 | `test_m21.py` | Both | Imported history, learned phrases, recurring bills, wallet nicknames, income guard | 10 |
 | `test_m3.py` | End-to-end | Monthly report, balance check, `/wallet check`, pinned Mochi message, ignoring pin notices | 10 |
 | `test_persona.py` | End-to-end | Persona in its own message, price history facts, answering it, fallback when Claude is down, undo totals | 8 |
-| `test_photos.py` | Both | Card notifications, no date, several payments, duplicates, money to people or yourself, big amounts, files, privacy scrubbing | 21 (26) |
+| `test_photos.py` | Both | Card notifications, no date, several payments, duplicates, money to people or yourself, big amounts, files, privacy scrubbing, #planned captions | 22 (27) |
 | `test_voice.py` | Both | Voice notes in English/Vietnamese, transfers by voice, bank names after a comma, Groq down, silence, spoken amounts | 13 (34) |
 | `test_transfers.py` | Both | `30tr160k`, sent-then-received amounts, typos far from the rate, Claude fallback for transfers | 8 (17) |
 | `test_balance.py` | Both | `/balance DBS`, “what is my DBS balance?”, other currencies, unknown wallets | 6 |
 | `test_subscriptions.py` | Both | Detection rules (intervals, ±5%, stale, habits, month ends); daily job, buttons, reminders, price changes, quarterly check, `/subscriptions`, failed sends | 28 |
 | `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 20 |
-| `test_charts.py` | Both | Periods and pie slices, Telegram's signature, the data route, the picture, buttons on every report | 20 |
+| `test_charts.py` | Both | Periods and pie slices, Telegram's signature, the data route, the picture, buttons on every report | 23 |
 | `test_mochi_art.py` | Both | Which picture for her weight and day, upload once and reuse, grandma's, fallback to text, nightly verdict | 7 |
 
 ### Running them
@@ -325,8 +330,8 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **148 passed, 167 skipped**: the end-to-end tests skip.
-To run all 315, install Postgres 16, create an empty database, and set for example
+Without `TEST_DATABASE_URL` you'll see about **148 passed, 171 skipped**: the end-to-end tests skip.
+To run all 319, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.

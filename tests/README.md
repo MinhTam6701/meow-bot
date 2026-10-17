@@ -8,7 +8,7 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # by name
 ```
 
-**207 tests, 315 checks** (a test with several examples runs once per example).
+**211 tests, 319 checks** (a test with several examples runs once per example).
 
 ## `test_parser.py` · 12 tests, 82 checks
 
@@ -129,7 +129,7 @@ The AI persona reply: separate message, price history facts, chat back, fallback
 - plain persona never chats
 - undo takes the entry off today and the allowance
 
-## `test_photos.py` · 21 tests, 26 checks
+## `test_photos.py` · 22 tests, 27 checks
 
 Photo logging: card notifications, duplicates, money to people or yourself, privacy scrubbing.
 
@@ -150,6 +150,7 @@ Photo logging: card notifications, duplicates, money to people or yourself, priv
 - screenshot sent as a file
 - other files are not read
 - caption reaches the model
+- planned in the caption keeps it out of everyday
 - numbers are scrubbed before saving or logging
 - same person ignores accents case and order
 - scrub (6 examples)
@@ -267,7 +268,7 @@ Mochi's pictures: the right one for her weight and day, uploaded once, sent with
 - picture failure falls back to text
 - nightly verdict comes with her picture
 
-## `test_charts.py` · 20 tests, 20 checks
+## `test_charts.py` · 23 tests, 23 checks
 
 Charts: the week or month as numbers, Telegram's signature on the Mini App, the pie picture, the buttons on every report.
 
@@ -291,3 +292,6 @@ Charts: the week or month as numbers, Telegram's signature on the Mini App, the 
 - ai suggestion goes under the tip in the chat
 - caption is short enough for telegram
 - suggestion none and errors mean no line
+- planned buys are out of everyday everywhere
+- withdraw uses the cash wallet you already have
+- old update ids are pruned

@@ -149,7 +149,15 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
     income_rows = [{"name": r["category"], "emoji": r["emoji"], "amount": r["total"],
                     "amount_text": fmt(r["total"], home)}
                    for r in rows if r["type"] == "income" and r["total"]]
-    bills = sum(c["amount"] for c in categories if c["bill"])
+    # Everyday = db.EVERYDAY (the same rule as Mochi and the everyday budget); "bills" is everything else.
+    everyday_now = db.everyday_by_category(conn, uid, start, end)
+    everyday_before = db.everyday_by_category(conn, uid, prev_start, prev_end)
+    everyday_total = sum(everyday_now.values())
+    bills = spent - everyday_total
+    planned = bills - sum(c["amount"] for c in categories if c["bill"])  # #planned buys, auto-logged non-bills
+    emoji = {c["name"]: c["emoji"] for c in categories}
+    everyday_cats = [{"name": n, "emoji": emoji.get(n, ""), "amount": a, "bill": False}
+                     for n, a in everyday_now.items() if a > 0]
     net = income - spent
 
     budgets = []
@@ -182,7 +190,7 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
         b = biggest[0]
         facts.append(f"💸 Biggest spend: {b['description'] or 'no note'} {fmt(b['amount'], home)} "
                      f"({day_text(b['occurred_on'])})")
-    moved = biggest_changes({c["name"]: c["amount"] for c in categories}, prev_by_cat)
+    moved = biggest_changes(everyday_now, everyday_before)
     if moved:
         facts.append(" · ".join(f"{'📈' if d > 0 else '📉'} {name} {'+' if d > 0 else '−'}{fmt(abs(d), home)}"
                                 for name, d in moved) + f" vs {compared_with}")
@@ -210,7 +218,9 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
         "previous_start": prev_start.isoformat() if has_prev else None,
         "next_start": next_start.isoformat() if next_start else None,
         "home": home, "decimals": minor_digits(home),
-        "spent": spent, "income": income, "net": net, "bills": bills, "everyday": spent - bills,
+        "spent": spent, "income": income, "net": net, "bills": bills, "everyday": everyday_total,
+        "bills_note": "rent, phone, study, fees" + (" and #planned buys" if planned > 0 else ""),
+        "everyday_by_category": everyday_now, "everyday_before": everyday_before,
         "spent_text": fmt(spent, home), "income_text": fmt(income, home),
         "net_text": ("+" if net >= 0 else "") + fmt(net, home), "bills_text": fmt(bills, home),
         "previous_spent": prev["spent"], "change_pct": change,
@@ -218,8 +228,8 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
         # Salary arrives once a month, so a weekly savings rate swings wildly: months only.
         "savings_rate": (net * 100 // income) if kind == "month" and income > 0 else None,
         "categories": categories, "income_categories": income_rows,
-        "pie": pie(categories, home=home), "pie_with_bills": pie(categories, include_bills=True, home=home),
-        "everyday_text": fmt(spent - bills, home),
+        "pie": pie(everyday_cats, home=home), "pie_with_bills": pie(categories, include_bills=True, home=home),
+        "everyday_text": fmt(everyday_total, home),
         "budgets": [dict(b, spent_text=fmt(b["spent"], home), limit_text=fmt(b["limit"], home),
                          pct=b["spent"] * 100 // b["limit"]) for b in budgets],
         "top": top, "patterns": patterns, "entries": entries,
@@ -232,15 +242,16 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
 def suggestion_facts(data: dict) -> str:
     """What the AI may base its suggestion on: numbers already worked out here, nothing to compute."""
     home = data["home"]
-    everyday = [c for c in data["categories"] if not c["bill"]]
+    now, before = data["everyday_by_category"], data["everyday_before"]
     period = (f"{data['label']} ({data['kind']}), "
               + (f"in progress: {data['days']} of {data['days_total']} days so far" if data["current"]
                  else "finished"))
     lines = [f"Period: {period}.",
-             f"Everyday spending: {data['everyday_text']}; bills (rent, phone, study, fees) {data['bills_text']} "
+             f"Everyday spending: {data['everyday_text']}; bills ({data['bills_note']}) {data['bills_text']} "
              f"are separate. Income {data['income_text']}.",
              "", f"Everyday categories, this period vs {data['compared_with']}:"]
-    lines += [f"- {c['name']}: {c['amount_text']} vs {fmt(c['previous'], home)}" for c in everyday[:10]]
+    for name in sorted(set(now) | set(before), key=lambda n: -now.get(n, 0))[:10]:
+        lines.append(f"- {name}: {fmt(now.get(name, 0), home)} vs {fmt(before.get(name, 0), home)}")
     if data["facts"]:
         lines += ["", "Fun facts shown to them:"] + [f"- {f}" for f in data["facts"]]
     if data["tip"]:
@@ -255,9 +266,7 @@ def suggestion_facts(data: dict) -> str:
             day = date.fromisoformat(e["day"]).strftime("%a %d %b")
             return f"- {day}: {e['description'] or 'no note'} ({e['category']}) {e['amount_text']}"
         lines += ["", "Biggest everyday entries:"] + [line(e) for e in sorted(spends, key=lambda e: -e["amount"])[:8]]
-        up = next((name for name, d in biggest_changes({c["name"]: c["amount"] for c in data["categories"]},
-                                                       {c["name"]: c["previous"] for c in data["categories"]})
-                   if d > 0), None)
+        up = next((name for name, d in biggest_changes(now, before) if d > 0), None)
         if up:
             mine = [e for e in spends if e["category"] == up][:12]
             lines += ["", f"All {up} entries this period:"] + [line(e) for e in mine]

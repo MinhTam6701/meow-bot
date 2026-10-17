@@ -18,6 +18,7 @@ from . import db, vision
 from .cards import btn
 from .models import Entry, ParseContext
 from .money import fmt, to_minor
+from .parser import PLANNED
 from .parser_llm import cost_usd
 from .parser_rules import learned_category, normalize
 from .transfers import TransferRequest
@@ -84,6 +85,8 @@ class PhotoFlow:
             entry, flags, dup = self.check_seen(conn, user, ctx, p)
             if entry is None:
                 continue
+            if caption and PLANNED in caption.lower() and PLANNED not in (entry.description or "").lower():
+                entry.description = f"{entry.description or ''} {PLANNED}".strip()  # as for typed messages
             if flags:
                 pid = db.add_pending(conn, uid, "photo", entry.model_dump(mode="json"), p.counterparty, p.note,
                                      flags, dup, p.date is None)
@@ -251,6 +254,6 @@ class PhotoFlow:
         self.tg.edit_message_text(chat_id, message_id, self.pending_text(item)
                                   + f"\n\n🔁 <i>Recorded as a move {escape(src.name)} → {escape(dst.name)}.</i>", None)
         t = TransferRequest(amount=entry.amount, currency=entry.currency, vnd_hint=False,
-                            from_wallet=src, to_wallet=dst, to_wallet_name=None)
+                            from_wallet=src, to_wallet=dst)
         self.do_transfer(conn, user, chat_id, ctx, t, "[photo]", on=entry.date)
         return "Recorded as a move"

@@ -98,7 +98,7 @@ def render(data: dict) -> bytes:
 
     if data.get("bills"):
         d.line([(left * S, (y - 14) * S), (right * S, (y - 14) * S)], fill=LINE, width=2 * S)
-        text(left, y + 26, f"Plus bills {data['bills_text']} (rent, phone, study, fees), not in the pie", 26, QUIET,
+        text(left, y + 26, f"Plus bills {data['bills_text']} ({data.get('bills_note', 'rent, phone, study, fees')}), not in the pie", 26, QUIET,
              anchor="ls")
 
     out = io.BytesIO()

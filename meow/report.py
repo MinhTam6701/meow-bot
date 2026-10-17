@@ -30,14 +30,14 @@ def _totals(conn, uid: int, first: date, nxt: date) -> dict:
 
 
 def _top_expenses(conn, uid: int, first: date, nxt: date, n: int = 3) -> list[dict]:
-    """The biggest everyday entries: bills (rent, phone, study, fees) and auto-logged ones left out."""
+    """The biggest everyday entries (db.EVERYDAY: no bills, auto-logged bills or #planned buys)."""
     return conn.execute(
-        """select t.description, -t.amount_home as amount, t.occurred_on, c.emoji
-           from live_transactions t left join categories c on c.id = t.category_id
-           where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
-             and t.amount_home is not null and t.source <> 'recurring' and coalesce(c.name, '') <> all(%s)
-           order by t.amount_home asc limit %s""",
-        (uid, first, nxt, list(db.FIXED_CATEGORIES), n)).fetchall()
+        f"""select t.description, -t.amount_home as amount, t.occurred_on, c.emoji
+            from live_transactions t left join categories c on c.id = t.category_id
+            where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
+              and t.amount_home is not null and {db.EVERYDAY}
+            order by t.amount_home asc limit %s""",
+        [uid, first, nxt, *db.everyday_args(), n]).fetchall()
 
 
 def build(conn, user: dict, first: date, persona_line: Optional[str] = None,

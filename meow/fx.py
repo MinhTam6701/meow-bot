@@ -74,13 +74,13 @@ def to_home(amount_minor: int, currency: str, home: str, rate: Decimal) -> int:
     return to_minor(from_minor(amount_minor, currency) / rate, home)
 
 
-def convert(amount_minor: int, from_cur: str, to_cur: str, home: str, rate_from: Decimal, rate_to: Decimal) -> int:
+def convert(amount_minor: int, from_cur: str, to_cur: str, rate_from: Decimal, rate_to: Decimal) -> int:
     """Between any two currencies through the home currency."""
     value = from_minor(amount_minor, from_cur) / rate_from * rate_to
     return to_minor(value, to_cur)
 
 
-def backfill(conn, fetch: Optional[Fetcher] = None) -> int:
+def backfill(conn) -> int:
     """Give entries that were saved without a rate (API was down) their home amount."""
     rows = conn.execute(
         """select t.id, t.amount_minor, t.currency, t.occurred_on, u.home_currency

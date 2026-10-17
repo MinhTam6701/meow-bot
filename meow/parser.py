@@ -13,6 +13,9 @@ def has_amount(text: str) -> bool:
     return bool(re.search(r"\d", text))
 
 
+PLANNED = "#planned"
+
+
 def parse_message(
     text: str,
     ctx: ParseContext,
@@ -34,10 +37,15 @@ def parse_message(
         return ParseResult(question="I couldn't read that one on my own. Try a format like \"pho 65k\" or \"grab 12.5 yesterday\".")
     past = examples(text) if examples else []
     result = parse_with_llm(text, ctx, llm_client, model, on_llm_call, examples=past)
-    # Learned phrases beat the model's guess.
+    planned = PLANNED in text.lower()
     for e in result.entries:
+        # Learned phrases beat the model's guess.
         learned = learned_category(e.description, ctx)
         cat = ctx.category(learned) if learned else None
         if cat and cat.type == e.type:
             e.category = cat.name
+        # "#planned" keeps a buy out of everyday spending (db.EVERYDAY reads it from the description).
+        # The rules keep the tag; Claude may rewrite the description, so it's put back here.
+        if planned and PLANNED not in (e.description or "").lower():
+            e.description = f"{e.description or ''} {PLANNED}".strip()
     return result

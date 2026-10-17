@@ -343,3 +343,41 @@ def test_suggestion_none_and_errors_mean_no_line():
     assert persona_llm.suggest(Client(fail=True), "m", "en", "Tam", "facts")[0] is None
     assert persona_llm.suggest(Client("Book Grab less on Fridays."), "m", "vi", "Tam", "f")[0] == \
         "Book Grab less on Fridays."
+
+
+def test_planned_buys_are_out_of_everyday_everywhere(env):
+    """One rule for "everyday" (db.EVERYDAY): the pie, the budget bar and the pace never disagree."""
+    user, today = _week_and_month(env)
+    # Read by Claude (an unknown item); its description drops the tag, the bot puts it back.
+    env.llm.queue.append({"entries": [{"amount": "900", "currency": "SGD", "type": "expense",
+                                       "category": "Shopping", "description": "laptop", "date": "2026-09-29"}]})
+    env.say("new laptop 900 #planned")
+    assert env.conn.execute("select description from transactions order by id desc limit 1").fetchone() == \
+        {"description": "laptop #planned"}
+    month = report_data.build(env.conn, _user(env), "month", today, today)
+    everyday_bar = next(b for b in month["budgets"] if b["name"] == "Everyday")["spent"]
+    assert sum(s["amount"] for s in month["pie"]) == month["everyday"] == everyday_bar == 8800
+    assert month["bills"] == 80000 + 90000 and month["bills_note"] == "rent, phone, study, fees and #planned buys"
+    assert "laptop" not in month["facts"][1]                       # not the biggest everyday spend
+    assert month["tip"].startswith("💡 S$512.00 left")              # the pace ignores it too
+
+
+def test_withdraw_uses_the_cash_wallet_you_already_have(env):
+    from meow import db
+    env.say("/start")
+    env.say("/wallet add Cash SGD cash")
+    env.conn.execute("update wallets set name = 'Cash SGD' where name = 'Cash'")   # as in your imported wallets
+    n = len(db.wallets(env.conn, ME))
+    env.say("withdraw 100 from DBS")
+    names = [w.name for w in db.wallets(env.conn, ME)]
+    assert len(names) == n and "Cash" not in names                 # no duplicate "Cash" wallet
+    bal = env.conn.execute("select balance_minor from wallet_balances where name = 'Cash SGD'").fetchone()
+    assert bal["balance_minor"] == 10000
+
+
+def test_old_update_ids_are_pruned(env):
+    env.say("/start")
+    env.conn.execute("insert into processed_updates (update_id, processed_at) values (999999, now() - interval '9 days')")
+    env.bot.run_tick(env.conn)
+    assert not env.conn.execute("select 1 from processed_updates where update_id = 999999").fetchone()
+    assert env.conn.execute("select count(*) as n from processed_updates").fetchone()["n"] >= 1

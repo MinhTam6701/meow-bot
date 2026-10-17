@@ -178,7 +178,7 @@
       const sr = d.savings_rate;
       tiles += `<div class="tile"><div class="k">Savings rate</div><div class="v ${sr == null ? "" : sr > 0 ? "good" : "bad"}">${sr == null ? "–" : sr + "%"}</div>
         <div class="d">${sr == null ? "no income yet" : "of income kept"}</div></div>
-        <div class="tile"><div class="k">Bills</div><div class="v">${esc(d.bills_text)}</div><div class="d">rent, phone, study, fees</div></div>`;
+        <div class="tile"><div class="k">Bills</div><div class="v">${esc(d.bills_text)}</div><div class="d">${esc(d.bills_note)}</div></div>`;
     }
 
     const slices = state.bills ? d.pie_with_bills : d.pie;

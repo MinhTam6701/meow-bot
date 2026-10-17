@@ -232,7 +232,7 @@ def test_parse_transfer_errors_and_non_transfers():
     assert parse_transfer("chuyển tiền cho Vũ 500k", ctx) is None  # money given to someone
     assert parse_transfer("grab 12", ctx) is None
     w = parse_transfer("withdraw 100 from dbs", ctx)
-    assert isinstance(w, TransferRequest) and w.to_wallet is None and w.to_wallet_name == "cash"
+    assert isinstance(w, TransferRequest) and w.to_wallet is None   # the cash wallet is picked when recorded
 
 
 def test_transfers_move_money_but_are_not_spending(env):

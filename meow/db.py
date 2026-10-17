@@ -39,6 +39,12 @@ def claim_update(conn, update_id: int) -> bool:
     return row is not None
 
 
+def prune_processed_updates(conn, keep_days: int = 7) -> int:
+    """Telegram only resends an update for about a day, so older update ids are no longer needed."""
+    return conn.execute("delete from processed_updates where processed_at < now() - make_interval(days => %s)",
+                        (keep_days,)).rowcount
+
+
 # --- users ------------------------------------------------------------------------
 
 def get_user(conn, telegram_id: int) -> Optional[dict]:
@@ -89,6 +95,14 @@ def categories(conn, user_id: int) -> list[CategoryInfo]:
         (user_id,),
     ).fetchall()
     return [CategoryInfo(r["id"], r["name"], r["emoji"], r["type"]) for r in rows]
+
+
+def find_cash_wallet(conn, user_id: int, currency: str) -> Optional[int]:
+    """The id of an existing cash wallet in that currency, whatever it's called ("Cash SGD", "CashVND")."""
+    row = conn.execute("""select id from wallets where user_id = %s and currency = %s and type = 'cash'
+                          and not archived order by is_default desc, id limit 1""",
+                       (user_id, currency)).fetchone()
+    return row["id"] if row else None
 
 
 def create_cash_wallet(conn, user_id: int, currency: str, name: Optional[str] = None) -> WalletInfo:
@@ -553,20 +567,34 @@ def logged_days(conn, user_id: int, since: date) -> set[date]:
 # Fixed costs that don't count against the everyday budget (and don't affect Mochi).
 FIXED_CATEGORIES = ("Housing", "Phone", "Subscriptions & Fees", "Education")
 
+# The one definition of "everyday spending", used by Mochi's bowl, the everyday budget, the pace tip,
+# the pie, the biggest spend and the biggest changes: expenses outside the bill categories, not logged
+# automatically by a recurring bill (or the undo of one), and not tagged #planned.
+# Needs `transactions t` (or live_transactions) joined to `categories c`; takes one parameter: everyday_args().
+EVERYDAY = """t.source <> 'recurring' and coalesce(t.description, '') not ilike '%%#planned%%'
+             and not exists (select 1 from transactions o where o.id = t.reverses_id and o.source = 'recurring')
+             and coalesce(c.name, '') <> all(%s)"""
+
+
+def everyday_args() -> list:
+    return [list(FIXED_CATEGORIES)]
+
 
 def everyday_spent(conn, user_id: int, start: date, end: date) -> int:
-    """Everyday spending in home currency between start (incl.) and end (excl.): no auto-logged bills,
-    no fixed-cost categories, no purchases tagged #planned."""
-    row = conn.execute(
-        """select coalesce(-sum(t.amount_home), 0)::bigint as s
-           from transactions t left join categories c on c.id = t.category_id
-           where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
-             and t.source <> 'recurring' and coalesce(t.description, '') not ilike '%%#planned%%'
-             and not exists (select 1 from transactions o where o.id = t.reverses_id and o.source = 'recurring')
-             and coalesce(c.name, '') <> all(%s)""",
-        (user_id, start, end, list(FIXED_CATEGORIES)),
-    ).fetchone()
-    return row["s"]
+    """Everyday spending in home currency between start (incl.) and end (excl.)."""
+    return sum(everyday_by_category(conn, user_id, start, end).values())
+
+
+def everyday_by_category(conn, user_id: int, start: date, end: date) -> dict[str, int]:
+    """Everyday spending per category name, start (incl.) to end (excl.)."""
+    rows = conn.execute(
+        f"""select coalesce(c.name, 'Uncategorised') as category, -sum(t.amount_home)::bigint as spent
+            from transactions t left join categories c on c.id = t.category_id
+            where t.user_id = %s and t.occurred_on >= %s and t.occurred_on < %s and t.type = 'expense'
+              and t.amount_home is not null and {EVERYDAY}
+            group by 1 having sum(t.amount_home) <> 0""",
+        [user_id, start, end, *everyday_args()]).fetchall()
+    return {r["category"]: r["spent"] for r in rows}
 
 
 def spent_for_mochi(conn, user_id: int, day: date) -> int:
@@ -813,13 +841,8 @@ def update_subscription(conn, sub_id: int, **fields) -> None:
 
 def daily_spend(conn, user_id: int, start: date, end: date, everyday: bool = True) -> dict[date, int]:
     """Spending per day in home currency, start (incl.) to end (excl.). Everyday = no fixed costs or bills."""
-    extra = ""
-    params: list = [user_id, start, end]
-    if everyday:
-        extra = """and t.source <> 'recurring' and coalesce(t.description, '') not ilike '%%#planned%%'
-                   and coalesce(c.name, '') <> all(%s)
-                   and not exists (select 1 from transactions o where o.id = t.reverses_id and o.source = 'recurring')"""
-        params.append(list(FIXED_CATEGORIES))
+    extra = f"and {EVERYDAY}" if everyday else ""
+    params: list = [user_id, start, end, *(everyday_args() if everyday else [])]
     rows = conn.execute(
         f"""select t.occurred_on as day, coalesce(-sum(t.amount_home), 0)::bigint as spent
             from transactions t left join categories c on c.id = t.category_id

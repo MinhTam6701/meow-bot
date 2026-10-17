@@ -31,8 +31,7 @@ class TransferRequest:
     currency: Optional[str]      # explicit or VND hint; None = use the source wallet's currency
     vnd_hint: bool
     from_wallet: Optional[WalletInfo]
-    to_wallet: Optional[WalletInfo]
-    to_wallet_name: Optional[str]   # for "withdraw": a cash wallet to create if missing
+    to_wallet: Optional[WalletInfo]   # None for "withdraw": the cash wallet is found or made when it's recorded
     received: Optional[tuple[Decimal, Optional[str], bool]] = None  # "as 10tr"
 
 
@@ -155,8 +154,7 @@ def parse_transfer(text: str, ctx: ParseContext) -> Union[TransferRequest, str, 
         elif said_received and a == to_w.currency and r == from_w.currency:
             amount, received = received, amount
     rec = (received.value, received.currency, received.vnd_hint) if received else None
-    return TransferRequest(amount.value, amount.currency, amount.vnd_hint, from_w, to_w,
-                           None if to_w else cash_name, rec)
+    return TransferRequest(amount.value, amount.currency, amount.vnd_hint, from_w, to_w, rec)
 
 
 # --- Claude, for transfers the rules can't read ------------------------------------------
@@ -234,7 +232,7 @@ def parse_transfer_llm(client: Any, model: str, text: str, ctx: ParseContext
             return (q or None), log
         if dst.currency == src.currency:
             got = None
-        return TransferRequest(sent, src.currency, False, src, dst, None,
+        return TransferRequest(sent, src.currency, False, src, dst,
                                (got, dst.currency, False) if got else None), log
     except Exception as exc:
         log.error = f"{type(exc).__name__}: {exc}"[:500]
