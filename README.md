@@ -1,14 +1,56 @@
 # 🐱 M.E.O.W. — My Expense & Outflow Watcher
 
-A private Telegram bot that tracks money from **chat messages, voice notes and payment screenshots**,
-in SGD and VND. Every entry gets a confirm card (OK / Undo / Category / Wallet) and a short reply from
-your persona. Mochi the cat lives on your daily allowance, a streak rewards logging every day, reports come
-as a pie picture with a charts page inside Telegram, and on the 1st you get a monthly report and a
-wallet-by-wallet balance check. **How to use it:** the user guide in the Project (*M.E.O.W. — User guide*).
+**A private Telegram money tracker you can text, talk to or send screenshots, in English, Vietnamese or both.**
+It keeps an exact ledger across Singapore and Vietnam accounts, and a cat called Mochi gets fatter or thinner
+with your everyday spending.
 
-**Status:** M1–M4 done: chat, voice and photo logging; personas; budgets; Mochi; streak; monthly report and
-balance check; subscription detector; weekly recap, patterns and questions about your spending.
-M5 in progress: charts (pie picture + Mini App), new fun facts, pace tip, Mochi's bowl at your pace, AI suggestion.
+| | |
+|---|---|
+| **Track** | Projects for Daily Life |
+| **Deployed** | [meow-finance.vercel.app](https://meow-finance.vercel.app) (Telegram webhook, scheduler and the charts Mini App; the bot itself answers only approved Telegram accounts) |
+| **Stack** | Python · FastAPI on Vercel · Supabase Postgres · Telegram Bot API + Mini App · Claude Haiku 4.5 · Groq Whisper |
+| **Tests** | 211 tests, 319 checks (`python -m pytest -q`) |
+
+---
+
+## Problem statement
+
+**Tracking money is a chore, so most people stop.** Finance apps want you to open them, pick a category from a
+menu and type an amount into a form, several times a day. The habit dies within weeks, and the record that's
+left is too patchy to say where the money went.
+
+It's worse when your life runs in **two currencies**. A Vietnamese professional in Singapore pays in SGD,
+sends and spends VND at home, and moves money between banks in both countries. Amounts like `65k`, `1tr2`
+or "50 nghìn" don't fit English-only apps, exchange rates turn every total into guesswork, and bank
+screenshots in two languages pile up unlogged.
+
+**Who has it:** young professionals and students living across two countries (here: Singapore and Vietnam)
+who want to know where their money goes, without bookkeeping.
+
+**Why it matters:** you can't change a spending habit you can't see. A tracker that takes five seconds per
+entry, in the app you already have open all day, is one you'll still use in month three.
+
+## Solution overview
+
+M.E.O.W. lives in **Telegram**, so logging is just texting: `pho 65k`, `grab 12.5 yesterday`, a voice note
+("ăn trưa 50 nghìn, Vietcombank") or a screenshot of a bank transfer. Simple messages are read instantly by
+rules; only unclear ones go to Claude. Every entry comes back as a card you can undo or correct in one tap,
+and corrections teach it your categories.
+
+Behind the chat is a proper ledger: integer minor units, an SGD value for every entry at that day's rate,
+append-only (undo adds a reversal, nothing is deleted). On top of it:
+
+- **Mochi the cat** turns your everyday budget into a daily food bowl. Spend less, she gets chonky; overspend
+  or forget to log, she gets thin and eventually moves to grandma's.
+- **Reports as pictures:** `/month`, `/recap` and `/report` arrive as a pie chart with fun facts, a daily
+  pace ("S$212 left: about S$14 a day for 15 days") and one AI suggestion. A **📊 Mini App** inside Telegram
+  lets you browse any week or month.
+- **A persona** (Sassy Cat, Asian Mom, Zen Monk) reacts to each entry using your own price history, and
+  questions odd prices.
+- **It does the chores itself:** bills log themselves, subscriptions are spotted from your history, renewals
+  are flagged, and on the 1st it walks you through matching each wallet to your bank app.
+
+**How it fits together**
 
 ```
 Telegram ──webhook──▶ Vercel (FastAPI, api/index.py) ──▶ meow/bot.py
@@ -26,6 +68,164 @@ Mini App (GET ?view=charts) ─▶ page ─▶ POST + Telegram signature ─▶ 
 Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, reminders, Mochi, reports, recap
 ```
 
+## Key features
+
+| Feature | What it does |
+|---|---|
+| **Chat logging** | `pho 65k`, `coffee 6, lunch 14`, `salary 4200 to DBS`. SGD/VND detection (`65k`, `1tr2`, `30tr160k`), dates, wallets, several items per message |
+| **Voice notes** | English, Vietnamese or mixed, up to 2 minutes; spoken amounts ("1 triệu 2", "12 dollars 50") are normalised before parsing |
+| **Photos & screenshots** | Receipts, bank apps, card notifications, Shopee orders. Clear payments are logged; duplicates, money to people, transfers to yourself and amounts ≥ S$500 are asked about first |
+| **Transfers** | `move 500 from DBS to VP as 9.8tr`: cross-currency moves with a typo guard against today's rate |
+| **Learning** | Correct a shop's category twice and it's remembered |
+| **Budgets** | Per category, total, and an *everyday* budget (no rent/bills/#planned) with 80% / 100% alerts |
+| **Mochi 🐱 & streak 🔥** | Daily bowl, nightly verdict with her picture, a live pinned status line, streak with freezes and milestones |
+| **Reports & charts 📊** | Pie picture + caption (fun facts, pace tip, AI suggestion) and a Telegram Mini App: weeks/months, savings rate, tap a slice to see its entries |
+| **Questions** | "how much on Grab in August?" — the AI writes a filter, code finds and adds up the entries |
+| **Subscriptions & bills** | Detects repeating charges, renewal reminders 2 days before, price-change alerts, "still using it?" every 3 months |
+| **Monthly balance check** | On the 1st, wallet by wallet: ✅ matches / ✏️ different (the gap is recorded as an adjustment) |
+| **Personas** | Three characters + Plain, roast level 0–3, English / Vietnamese / mix |
+
+Full usage: [Using the bot](#using-the-bot) below, and the user guide.
+
+## AI integration
+
+**The rule that shapes everything: the AI reads and writes words; code does every number.** Claude never
+adds, converts or compares money. It turns messy input into structured data that code validates, and writes
+short text from facts code computed.
+
+| Where | Model | What the AI does | What code does around it |
+|---|---|---|---|
+| **Parsing text** (`parser_llm.py`) | Claude Haiku 4.5, forced tool call | Only for messages the rules can't read (~27% in real use): returns entries (amount, currency, type, category, date) | Rules run first; output is validated by Pydantic against your real categories/wallets; your learned phrases override its category; bad output becomes a question, never a crash |
+| **Your history as context** | same | Gets up to a handful of your similar past entries as examples | Picks them from your ledger by phrase match |
+| **Voice notes** (`speech.py`) | Groq `whisper-large-v3` | Speech → text, with your wallet names as a spelling hint | Spoken amounts normalised ("50 nghìn" → 50k), then the same parser as text |
+| **Photos** (`vision.py`, `photo_flow.py`) | Claude Haiku 4.5 vision, forced tool call | Reads amount paid, date, bank, counterparty, category | Scrubs account/card/phone numbers; checks duplicates (±1 day, ±7 if undated), your own name, people vs businesses, big amounts → asks before saving |
+| **Transfers** (`transfers.py`) | Claude Haiku 4.5, forced tool call | Reads wording the rules miss | Rejects received amounts far from today's exchange rate |
+| **Questions** (`ask.py`) | Claude Haiku 4.5, forced tool call | Turns a question into a filter (words, categories, wallets, dates, grouping) | Runs the query and does the sums; shows the filter so mistakes are visible |
+| **Persona replies** (`persona_llm.py`) | Claude Haiku 4.5 | 1–2 in-character sentences after each entry | Supplies the facts: your usual price for the item, today's total, allowance, budget alerts |
+| **Report suggestion** | Claude Haiku 4.5 | One practical suggestion under weekly/monthly reports | Supplies the numbers and entries; strict rules (below); "NONE" when nothing stands out |
+
+Real usage so far: 99 AI calls for about **US$0.12** in total, 1 failed parse (handled as a question);
+30 of 41 typed or spoken messages were read by rules alone.
+
+## External tools & datasets
+
+| Tool / API | Used for |
+|---|---|
+| [Telegram Bot API](https://core.telegram.org/bots/api) + [Mini Apps](https://core.telegram.org/bots/webapps) | The chat interface; the 📊 charts page (signed `initData`) |
+| [Anthropic Claude](https://docs.claude.com) (`claude-haiku-4-5`) | Parsing fallback, photo reading, transfers, questions, persona, report suggestion |
+| [Groq](https://console.groq.com) (`whisper-large-v3`) | Voice-note transcription |
+| [open.er-api.com](https://open.er-api.com) | Daily exchange rates (incl. VND), stored per entry |
+| [Supabase](https://supabase.com) Postgres + `pg_cron`, `pg_net`, Vault | Database; the 15-minute scheduler and its secrets |
+| [Vercel](https://vercel.com) (Python, FastAPI) | Webhook, scheduler endpoint, Mini App page and data |
+| Python: `fastapi`, `httpx`, `anthropic`, `psycopg`, `pydantic`, `Pillow` | App, HTTP, AI SDK, database, validation, pie pictures |
+| [Inter](https://rsms.me/inter/) font (SIL OFL, in `assets/fonts/`) | Text in the pie pictures |
+| Mochi artwork (`assets/mochi/`) | Own art, 7 still pictures |
+
+**Datasets:** no public dataset. The author's own ~1 year of [Money Manager](https://realbyteapps.com) history
+(1,162 entries) was imported with `scripts/import_moneymanager.py` to give the parser real examples and the
+reports real history. Personal exports are git-ignored and never committed. Test data is synthetic
+(`tests/parser_cases.py`, fixtures in `tests/`).
+
+## Installation & setup
+
+You need Python 3.11+, a Telegram account, a free Supabase project, an Anthropic API key, and (optional)
+a Groq key for voice. Allow about 30 minutes.
+
+**1. Create the bot.** In Telegram, message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
+Get your own Telegram user ID from [@userinfobot](https://t.me/userinfobot).
+
+**2. Create the database.** New Supabase project → **SQL editor** → run every file in
+`supabase/migrations/` in order (`0001` … `0012`). Then **Connect → Transaction pooler** (port 6543) and copy
+the URI with your password (URL-encode special characters: `@` → `%40`).
+
+**3. Configure.**
+```bash
+git clone https://github.com/MinhTam6701/meow-bot && cd meow-bot
+python -m venv .venv
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+cp .env.example .env                   # Windows: copy .env.example .env
+```
+Fill in `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (any long random string), `DATABASE_URL`,
+`ANTHROPIC_API_KEY`, `ALLOWED_USER_IDS` (your user ID), `CRON_SECRET` (another random string) and optionally
+`GROQ_API_KEY`. All settings are listed under [Settings](#settings-environment-variables).
+
+**4. Run it locally** (no public URL needed):
+```bash
+python -m pytest -q                    # unit tests; see Testing for the end-to-end ones
+python scripts/poll.py --force         # long-polls Telegram (removes any webhook)
+```
+Message your bot `/start`, then try `pho 65k`, `coffee 6, lunch 14`, a voice note or a screenshot.
+
+**5. Deploy (optional).** Vercel → **Add New → Project** → import the repo, framework **Other**, no build
+command → add every `.env` key under **Environment Variables** → deploy. Check `https://<your-app>.vercel.app/api/health`
+says `{"ok":true}`, then point Telegram at it (also sets the command menu and the 📊 Charts button):
+```bash
+python scripts/set_webhook.py https://<your-app>.vercel.app
+```
+
+**6. Turn on the scheduler** (reminders, bills, Mochi, reports). In Supabase SQL editor, store the URL and
+secret in Vault and schedule the 15-minute tick:
+```sql
+select vault.create_secret('https://<your-app>.vercel.app/api/tick', 'meow_tick_url');
+select vault.create_secret('<your CRON_SECRET>', 'meow_cron_secret');
+select cron.schedule('meow-tick', '*/15 * * * *', $$
+  select net.http_post(
+    url := (select decrypted_secret from vault.decrypted_secrets where name = 'meow_tick_url'),
+    headers := jsonb_build_object('Content-Type', 'application/json',
+      'X-Cron-Secret', (select decrypted_secret from vault.decrypted_secrets where name = 'meow_cron_secret')),
+    body := '{"job": "tick"}'::jsonb, timeout_milliseconds := 25000);
+$$);
+```
+(Enable the `pg_cron` and `pg_net` extensions first under **Database → Extensions**.)
+
+## AI safety & limitations
+
+### Risks and the guardrails against them
+
+| Risk | Guardrail |
+|---|---|
+| **The AI gets a number wrong** (wrong total, bad conversion, invented amount) | The AI never does arithmetic. Totals, rates, budgets, pace and reports are plain code with tests. AI output is only ever parsed data or words |
+| **The AI misreads a message** | Rules handle common phrasing first (no AI). AI output goes through a forced tool schema + Pydantic validation against your real categories and wallets; anything invalid becomes a clarifying question. Every entry is shown on a card with one-tap Undo / Category / Wallet |
+| **Typos in transfers** (`9.8tr` vs `98tr`) | Received amounts far from today's exchange rate are refused |
+| **A screenshot logs the wrong thing** | Duplicates, money sent to people, transfers to your own name and amounts ≥ S$500 are never logged without asking |
+| **Leaking personal data** | Photos are not stored. Account, card and phone numbers and reference codes are scrubbed *before* anything is saved or logged (the AI's raw output included). Personal exports are git-ignored. Only the AI-relevant text is sent to Claude/Groq |
+| **Strangers using the bot or seeing data** | Only `ALLOWED_USER_IDS` are served. The webhook and scheduler need secrets. The Mini App checks Telegram's HMAC signature (bot token, 24 h expiry) and returns only the signer's own numbers; nothing private is in its URL |
+| **Prompt injection** (text in a screenshot or message that tries to steer the model) | Every reading call is a forced tool call with a fixed schema, so the model can only return entries/filters, which code validates. It can't run actions, see other users' data or change settings |
+| **Harmful or useless advice** | The persona is told to use only given numbers, never invent facts, never give investment advice, never lecture. The report suggestion may **never suggest cutting needs** (meals, groceries, rent, bills, phone, health, study, getting to work), must point at something in the data, and answers `NONE` when nothing stands out. It's off for the Plain persona |
+| **AI outage or cost runaway** | Pre-written fallback lines when Claude is down; failures are logged, never shown as errors mid-entry. A cap of 300 AI calls per user per 24 h. Every call is logged with tokens, cost, latency and success (`llm_calls`) |
+| **Double-counting** (Telegram retries, overlapping scheduler runs) | Every update and every daily/weekly job runs at most once (`processed_updates`, `job_runs`); the ledger is append-only, so history always adds up |
+
+### Testing
+
+- **211 tests, 319 checks** (`tests/`). End-to-end tests run the whole bot against a real Postgres with a
+  fake Telegram and a fake Claude that can return bad output or fail on purpose: malformed AI answers,
+  Claude down, Groq down, silence, duplicate updates, strangers, tampered or expired Mini App signatures,
+  and privacy scrubbing (`test_photos.py`).
+- **Regression rule:** every bug found in real use becomes a test with the real input first (e.g. a
+  Whisper transcript "Game 33 nghìn, Vietcombank.", a Shopee screenshot read with today's date, `30tr160k`).
+- **Accuracy:** `scripts/eval_parser.py` runs 52 sample messages through rules + Claude; the rules alone get
+  all 49 they claim, and 3 are left for Claude. `scripts/eval_history.py` replays your last 3 months.
+  `scripts/try_photo.py` shows what Claude reads from real screenshots without saving anything.
+
+### Limitations
+
+- **Single-user by design.** Home currency (SGD) and timezone (Singapore) are fixed; there's no in-app way
+  to delete your data. Opening it to the public would need those, plus a privacy notice and per-person cost limits.
+- **Text and photos go to Anthropic, voice to Groq** for reading. Nothing is stored there by this app, but
+  the data does leave the server.
+- **Readings can still be wrong** (unusual receipts, noisy voice notes, Vietnamese bank apps it hasn't
+  seen). The card makes every entry visible and one tap to fix, and big or unusual ones are confirmed.
+- **Exchange rates are daily** from a free API, so SGD values of VND entries are approximate within a day.
+- **The AI suggestion is advice from a small model,** based only on your own entries. It's not financial advice.
+- **Charts page needs Telegram**: it can't be opened in a normal browser (by design, for privacy).
+
+---
+
+# Reference
+
+## Using the bot
+
 **One rule for "everyday spending"** (`db.EVERYDAY`): expenses outside the bill categories (Housing,
 Phone, Subscriptions & Fees, Education), not logged automatically by a recurring bill, and not tagged
 `#planned`. Mochi's bowl, the everyday budget, the pace tip, the pie, the biggest spend and the biggest
@@ -36,10 +236,6 @@ changes all use it, so they never disagree. Everything else counts as "bills".
   persona's words. Amounts, totals, budgets and exchange rates are plain, tested code.
 - **Nothing is deleted.** Undo appends a reversal entry; corrections are recorded, not overwritten.
 - **Safe to repeat.** Every Telegram update and every scheduled job runs at most once.
-
----
-
-## Using the bot
 
 ### Logging
 | You send | What happens |
@@ -207,33 +403,12 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
 
-## Setup
+## Running it
 
-### 1. Database URL
-Supabase → your `meow-bot` project → **Connect** → **Transaction pooler** (port **6543**).
-Copy the URI and put your database password in it. URL-encode special characters (`@` → `%40`).
-
-### 2. Run it locally
-```bash
-python -m venv .venv
-.venv\Scripts\activate            # Windows  (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements-dev.txt
-copy .env.example .env            # then fill in the values (macOS/Linux: cp)
-python -m pytest -q               # see Testing
-python scripts/poll.py --force    # run the bot from your laptop (removes the webhook)
-```
-Send `/start`, then try `pho 65k`, `coffee 6, lunch 14`, a voice note or a screenshot.
-When done, point Telegram back at Vercel: `python scripts/set_webhook.py https://meow-finance.vercel.app`.
-
-### 3. Deploy on Vercel
-Pushing to `main` on GitHub deploys automatically.
-1. First time: Vercel → **Add New → Project** → import `meow-bot`. Framework preset: **Other**. No build command.
-2. **Environment Variables**: every key from `.env.example` with your real values. Redeploy after changing them.
-3. `https://meow-finance.vercel.app/api/health` should say `{"ok":true}`.
-4. `python scripts/set_webhook.py https://meow-finance.vercel.app` sets the webhook and the command menu.
-   Run it again whenever commands change. If the bot is silent: Vercel → Logs, and re-run it to see Telegram's last error.
+Setup is in [Installation & setup](#installation--setup) above; details here.
 
 **Database changes go first.** Apply a new migration in Supabase *before* pushing code that needs it.
+Pushing to `main` deploys to Vercel automatically.
 
 ### The scheduler
 Supabase `pg_cron` calls the Vercel app every 15 minutes with an `X-Cron-Secret` header (stored in Supabase
