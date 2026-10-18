@@ -305,8 +305,9 @@ with a **📊 See charts** button under it. The caption has:
 - **fun facts**: days logged, the biggest spend (bills left out), and the everyday category that rose most
   and the one that fell most, in money, vs the same days of the last period (moves under S$10 left out);
 - **💡 the pace** (code): what's left of the everyday budget (a week gets budget × 7 ÷ days in the month)
-  and what that is per day from tomorrow; a finished period says how it ended. On the current month a
-  **🐱 Set Mochi's bowl to S$x/day** button makes that her bowl until the month ends (a new everyday budget
+  and what that is per day for the days left, today included (today's own spending isn't taken off first,
+  so the figure holds still all day); a finished period says how it ended. On the current month a
+  **🐱 Set Mochi's bowl to S$x/day** button makes that her bowl from today until the month ends (a new everyday budget
   resets it; `mochi_state.bowl_override_*`);
 - **🤖 one suggestion** (AI, chat only, not with the Plain persona): Claude gets the numbers above and the
   entries behind them, and may not suggest cutting needs (meals, groceries, rent, bills, phone, health,

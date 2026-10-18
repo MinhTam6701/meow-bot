@@ -90,7 +90,9 @@ def biggest_changes(now: dict[str, int], before: dict[str, int], at_least: int =
 
 
 def pace(conn, user: dict, kind: str, start: date, end: date, today: date, current: bool) -> Optional[dict]:
-    """The tip: how much of the everyday budget is left and what that means per day from tomorrow.
+    """The tip: how much of the everyday budget is left and what that means per day, today included.
+    Today's own spending isn't taken off first, so the number holds still all day and can be
+    Mochi's bowl for today: what you spend today then comes out of it like any other day.
     A week gets its share of the month's everyday budget (budget × 7 ÷ days in the month).
     A finished period says how it ended. No everyday budget, no tip."""
     budget = user.get("everyday_budget_minor")
@@ -108,16 +110,13 @@ def pace(conn, user: dict, kind: str, start: date, end: date, today: date, curre
         name = name.replace("this week's", "the week's")
         return {"text": f"💡 Finished {fmt(abs(diff), home)} {'under' if diff >= 0 else 'over'} {name}.",
                 "per_day": None}
-    tomorrow = today + timedelta(days=1)
-    left = allowance - db.everyday_spent(conn, uid, start, tomorrow)
-    days_left = (end - tomorrow).days
-    if left < 0:
-        return {"text": f"💡 {fmt(-left, home)} over {name} already. Every no-spend day from here helps.",
-                "per_day": None}
-    if days_left == 0:
-        return {"text": f"💡 {fmt(left, home)} left of {name}, and today is the last day.", "per_day": None}
+    left = allowance - db.everyday_spent(conn, uid, start, today)
+    days_left = (end - today).days                       # today included, so never 0
+    if left <= 0:
+        return {"text": f"💡 {fmt(-left, home)} over {name} already, before today. "
+                        "Every no-spend day from here helps.", "per_day": None}
     per_day = left // days_left
-    when = "for tomorrow, the last day" if days_left == 1 else f"for the {days_left} days after today"
+    when = "for today, the last day" if days_left == 1 else f"for the {days_left} days left, today included"
     return {"text": f"💡 {fmt(left, home)} left of {name}: about {fmt(per_day, home)} a day {when}.",
             "per_day": per_day if per_day > 0 else None}
 
@@ -197,8 +196,9 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
     pace_tip = pace(conn, user, kind, start, end, today, current)
     if pace_tip and kind == "month" and pace_tip["per_day"]:
         state = db.mochi_state(conn, uid)
-        if state and mochi.bowl_on(state, user["everyday_budget_minor"], today + timedelta(days=1)) != pace_tip["per_day"]:
-            pace_tip["bowl_offer"] = {"minor": pace_tip["per_day"], "from": (today + timedelta(days=1)).isoformat(),
+        # The new bowl starts today, so /today, the pinned line and tonight's score all use it at once.
+        if state and mochi.bowl_on(state, user["everyday_budget_minor"], today) != pace_tip["per_day"]:
+            pace_tip["bowl_offer"] = {"minor": pace_tip["per_day"], "from": today.isoformat(),
                                       "text": f"🐱 Set Mochi's bowl to {fmt(pace_tip['per_day'], home)}/day"}
 
     entries = [{"day": e["occurred_on"].isoformat(), "type": e["type"], "description": e["description"],

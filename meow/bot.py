@@ -1445,7 +1445,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             return None
 
     def on_bowl_button(self, conn, uid: int, rest: str, chat_id: int, message_id: int) -> str:
-        """"Set Mochi's bowl to S$14.10/day": from tomorrow to the end of this month."""
+        """"Set Mochi's bowl to S$14.10/day": from today to the end of this month."""
         user = db.get_user(conn, uid)
         minor, _, since = rest.partition(":")
         today = self.today_for(user)
@@ -1455,14 +1455,19 @@ class Bot(PhotoFlow, SubscriptionFlow):
             return "That button is broken."
         if not user.get("everyday_budget_minor") or not db.mochi_state(conn, uid):
             return "Set an everyday budget first: /budget everyday 600"
-        if since <= today or (since.year, since.month) != (today.year, today.month) or minor <= 0:
+        # A button from an earlier day was worked out on old numbers. (Older buttons said "from tomorrow".)
+        if since < today or since > today + timedelta(days=1) or (since.year, since.month) != (today.year, today.month) \
+                or minor <= 0:
             return "That pace is out of date. Send /month for a fresh one."
+        since = today
         db.set_bowl_override(conn, uid, minor, since)
         last = (since.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         self.tg.edit_message_reply_markup(chat_id, message_id, self.chart_button("month", today))
         home = user["home_currency"]
-        self.tg.send_message(chat_id, f"🐱 Mochi's bowl is <b>{fmt(minor, home)}</b> a day from "
-                                      f"{since.strftime('%a %d %b')} to {last.strftime('%d %b')}. "
+        left = minor - db.spent_for_mochi(conn, uid, today)
+        today_text = (f"{fmt(left, home)} left today" if left >= 0 else f"over by {fmt(-left, home)} today")
+        self.tg.send_message(chat_id, f"🐱 Mochi's bowl is <b>{fmt(minor, home)}</b> a day from today "
+                                      f"to {last.strftime('%a %d %b')} ({today_text}). "
                                       f"Next month it goes back to your everyday budget ÷ days.")
         self.refresh_pinned(conn, user, today, create=False)
         return "Bowl updated 🐱"

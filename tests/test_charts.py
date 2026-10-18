@@ -264,14 +264,17 @@ def test_fun_facts_are_logged_days_biggest_spend_and_biggest_changes(env):
 def test_tip_is_the_pace_for_the_rest_of_the_period(env):
     user, today = _week_and_month(env)
     week = report_data.build(env.conn, user, "week", today, today)
-    assert week["tip"] == ("💡 S$97.00 left of this week's S$140.00 share of your everyday budget: "
-                           "about S$19.40 a day for the 5 days after today.")
+    # Today's S$43 isn't taken off first: the per-day figure includes today and holds still all day.
+    assert week["tip"] == ("💡 S$140.00 left of this week's S$140.00 share of your everyday budget: "
+                           "about S$23.33 a day for the 6 days left, today included.")
     assert week["bowl_offer"] is None                              # the bowl is a monthly thing
     month = report_data.build(env.conn, user, "month", today, today)
-    assert month["tip"] == ("💡 S$512.00 left of your S$600.00 everyday budget: "
-                            "about S$512.00 a day for tomorrow, the last day.")
-    assert month["bowl_offer"] == {"minor": 51200, "from": "2026-09-30",
-                                   "text": "🐱 Set Mochi's bowl to S$512.00/day"}
+    assert month["tip"] == ("💡 S$555.00 left of your S$600.00 everyday budget: "
+                            "about S$277.50 a day for the 2 days left, today included.")
+    assert month["bowl_offer"] == {"minor": 27750, "from": "2026-09-29",
+                                   "text": "🐱 Set Mochi's bowl to S$277.50/day"}
+    last = report_data.build(env.conn, user, "month", date(2026, 9, 30), date(2026, 9, 30))
+    assert last["tip"] == "💡 S$512.00 left of your S$600.00 everyday budget: about S$512.00 a day for today, the last day."
     aug = report_data.build(env.conn, user, "month", date(2026, 8, 1), today)
     assert aug["tip"] == "💡 Finished S$600.00 under your S$600.00 everyday budget."
     env.conn.execute("update users set everyday_budget_minor = null")
@@ -284,16 +287,26 @@ def test_bowl_button_sets_mochis_bowl_for_the_rest_of_the_month(env):
     env.conn.execute("update users set persona = 'plain'")
     msg = env.say("/month")
     rows = msg.markup["inline_keyboard"]
-    assert rows[1][0]["callback_data"] == "bowl:51200:2026-09-30" and "S$512.00/day" in rows[1][0]["text"]
-    env.press("bowl:51200:2026-09-30", msg.id)
+    assert rows[1][0]["callback_data"] == "bowl:27750:2026-09-29" and "S$277.50/day" in rows[1][0]["text"]
+    env.press("bowl:27750:2026-09-29", msg.id)
     state = db.mochi_state(env.conn, ME)
-    assert mochi.bowl_on(state, 60000, date(2026, 9, 30)) == 51200
-    assert mochi.bowl_on(state, 60000, date(2026, 9, 29)) == 2000          # not today
+    assert mochi.bowl_on(state, 60000, date(2026, 9, 29)) == 27750         # today too
+    assert mochi.bowl_on(state, 60000, date(2026, 9, 30)) == 27750
+    assert mochi.bowl_on(state, 60000, date(2026, 9, 28)) == 2000
     assert mochi.bowl_on(state, 60000, date(2026, 10, 1)) == 60000 // 31   # next month: back to normal
-    assert "Mochi's bowl is <b>S$512.00</b> a day from Wed 30 Sep to 30 Sep" in env.tg.sent[-1].text
+    assert ("Mochi's bowl is <b>S$277.50</b> a day from today to Wed 30 Sep (S$234.50 left today)"
+            in env.tg.sent[-1].text)
     assert env.tg.answers[-1] == "Bowl updated 🐱"
-    env.press("bowl:100:2026-09-29", msg.id)                              # an old button
+    # /today, Mochi's card and the line under each entry all show the new bowl at once.
+    assert "bowl S$234.50 left" in env.say("/today").text
+    assert "Daily bowl: S$277.50 (your pace for the rest of the month)" in env.say("/mochi").text
+    assert "bowl S$228.50 left" in env.say("coffee 6").text
+    # /month no longer offers the same bowl, and the figure doesn't drift as today's spending grows.
+    assert len(env.say("/month").markup["inline_keyboard"]) == 1
+    env.press("bowl:100:2026-09-28", msg.id)                              # an old button
     assert "out of date" in env.tg.answers[-1]
+    env.press("bowl:100:2026-09-30", msg.id)                              # a button from before this fix
+    assert db.mochi_state(env.conn, ME)["bowl_override_from"] == date(2026, 9, 29)
     env.say("/budget everyday 700")                                       # a new budget clears it
     assert db.mochi_state(env.conn, ME)["bowl_override_minor"] is None
 
@@ -304,7 +317,7 @@ def test_ai_suggestion_goes_under_the_tip_in_the_chat(env):
     n = len(env.tg.sent)
     env.say("/recap")
     caption = env.tg.sent[n].text
-    assert "💡 S$97.00 left" in caption and "🤖 <i>" in caption and "Take the MRT" in caption
+    assert "💡 S$140.00 left" in caption and "🤖 <i>" in caption and "Take the MRT" in caption
     prompt = env.llm.chats[-1]
     assert "Needs are not for cutting" in prompt["system"]
     assert "All Transport entries this period" in prompt["messages"][-1]["content"]
@@ -359,7 +372,8 @@ def test_planned_buys_are_out_of_everyday_everywhere(env):
     assert sum(s["amount"] for s in month["pie"]) == month["everyday"] == everyday_bar == 8800
     assert month["bills"] == 80000 + 90000 and month["bills_note"] == "rent, phone, study, fees and #planned buys"
     assert "laptop" not in month["facts"][1]                       # not the biggest everyday spend
-    assert month["tip"].startswith("💡 S$512.00 left")              # the pace ignores it too
+    later = report_data.build(env.conn, _user(env), "month", date(2026, 9, 30), date(2026, 9, 30))
+    assert later["tip"].startswith("💡 S$512.00 left")              # the pace ignores it too
 
 
 def test_withdraw_uses_the_cash_wallet_you_already_have(env):
