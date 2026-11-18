@@ -6,17 +6,18 @@ from html import escape
 from typing import Optional
 
 from . import budgets as bud
-from . import db, insights
+from . import db, insights, periods
 from .money import fmt
 
 
-def month_bounds(first: date) -> tuple[date, date]:
-    nxt = (first + timedelta(days=32)).replace(day=1)
-    return first, nxt
+def month_bounds(first: date, start_day: int = 1) -> tuple[date, date]:
+    """The user's month containing `first` (calendar month for start day 1)."""
+    return periods.bounds(first, start_day)
 
 
-def previous_month(day: date) -> date:
-    return (day.replace(day=1) - timedelta(days=1)).replace(day=1)
+def previous_month(day: date, start_day: int = 1) -> date:
+    """First day of the user's month before the one containing `day`."""
+    return periods.previous(day, start_day)
 
 
 def _totals(conn, uid: int, first: date, nxt: date) -> dict:
@@ -43,14 +44,15 @@ def _top_expenses(conn, uid: int, first: date, nxt: date, n: int = 3) -> list[di
 def build(conn, user: dict, first: date, persona_line: Optional[str] = None,
           today: Optional[date] = None) -> str:
     uid, home = user["telegram_id"], user["home_currency"]
-    first, nxt = month_bounds(first)
-    prev_first, _ = month_bounds(previous_month(first))
+    sd = periods.start_day(user)
+    first, nxt = month_bounds(first, sd)
+    prev_first = previous_month(first, sd)
     cur, prev = _totals(conn, uid, first, nxt), _totals(conn, uid, prev_first, first)
     cats = [r for r in db.month_by_category_home(conn, uid, first, nxt) if r["type"] == "expense"]
     prev_cats = {r["category"]: -(r["total"] or 0)
                  for r in db.month_by_category_home(conn, uid, prev_first, first) if r["type"] == "expense"}
 
-    lines = [f"📊 <b>{first.strftime('%B %Y')}</b> · monthly report"]
+    lines = [f"📊 <b>{periods.label(first, nxt)}</b> · monthly report"]
     if persona_line:
         lines.append(f"<i>{escape(persona_line, quote=False)}</i>")
 
@@ -58,7 +60,7 @@ def build(conn, user: dict, first: date, persona_line: Optional[str] = None,
     change = ""
     if prev["spent"]:
         pct = (spent - prev["spent"]) * 100 // prev["spent"]
-        change = f" ({'+' if pct >= 0 else ''}{pct}% vs {prev_first.strftime('%B')})"
+        change = f" ({'+' if pct >= 0 else ''}{pct}% vs {prev_first.strftime('%B') if sd == 1 else 'last month'})"
     net = income - spent
     lines += ["", f"💸 Spent <b>{fmt(spent, home)}</b>{change}",
               f"💰 Income <b>{fmt(income, home)}</b>",

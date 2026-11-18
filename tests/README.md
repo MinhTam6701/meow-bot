@@ -8,7 +8,7 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # by name
 ```
 
-**211 tests, 319 checks** (a test with several examples runs once per example).
+**224 tests, 332 checks** (a test with several examples runs once per example).
 
 ## `test_parser.py` · 12 tests, 82 checks
 
@@ -295,3 +295,21 @@ Charts: the week or month as numbers, Telegram's signature on the Mini App, the 
 - planned buys are out of everyday everywhere
 - withdraw uses the cash wallet you already have
 - old update ids are pruned
+
+## `test_setup.py` · 13 tests, 13 checks
+
+M6: guided /setup, the default wallet per currency, your own month start, and the balance on the card.
+
+- periods
+- new user setup currencies wallets default and month
+- setup typed wallet name and day
+- typing an entry during setup still logs it
+- existing user reruns setup and keeps home currency
+- old setup buttons are ignored
+- added wallet offers to become default
+- wallet list has default picker
+- card shows wallet balance
+- month start moves month budgets and bowl
+- report on month start and check on the first
+- month start buttons
+- same preset in two currencies
