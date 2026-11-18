@@ -9,7 +9,7 @@ with your everyday spending.
 | **Track** | Projects for Daily Life |
 | **Deployed** | [meow-finance.vercel.app](https://meow-finance.vercel.app) (Telegram webhook, scheduler and the charts Mini App; the bot itself answers only approved Telegram accounts) |
 | **Stack** | Python · FastAPI on Vercel · Supabase Postgres · Telegram Bot API + Mini App · Claude Haiku 4.5 · Groq Whisper |
-| **Tests** | 211 tests, 319 checks (`python -m pytest -q`) |
+| **Tests** | 224 tests, 332 checks (`python -m pytest -q`) |
 
 ---
 
@@ -72,11 +72,13 @@ Supabase pg_cron (every 15 min) ─▶ Vercel: exchange rates, recurring bills, 
 
 | Feature | What it does |
 |---|---|
-| **Chat logging** | `pho 65k`, `coffee 6, lunch 14`, `salary 4200 to DBS`. SGD/VND detection (`65k`, `1tr2`, `30tr160k`), dates, wallets, several items per message |
+| **Chat logging** | `pho 65k`, `coffee 6, lunch 14`, `salary 4200 to DBS`. SGD/VND detection (`65k`, `1tr2`, `30tr160k`), dates, wallets, several items per message. The card shows what's left in the wallet |
 | **Voice notes** | English, Vietnamese or mixed, up to 2 minutes; spoken amounts ("1.2 million" said in Vietnamese, "12 dollars 50") are normalised before parsing |
 | **Photos & screenshots** | Receipts, bank apps, card notifications, Shopee orders. Clear payments are logged; duplicates, money to people, transfers to yourself and amounts ≥ S$500 are asked about first |
 | **Transfers** | `move 500 from DBS to VP as 9.8tr`: cross-currency moves with a typo guard against today's rate |
 | **Learning** | Correct a shop's category twice and it's remembered |
+| **Setup** | `/start` walks a new user through home currency, the currencies they use, their wallets in each (tap a bank or type one), the default wallet per currency and the day their month starts. `/setup` runs it again |
+| **Your month** | Start the month on any day 1–28 (the day after payday): budgets, Mochi's bowl, `/month`, reports, the pace tip and the charts follow it (`/monthstart 26` → 26 Oct – 25 Nov). The balance check stays on the 1st |
 | **Budgets** | Per category, total, and an *everyday* budget (no rent/bills/#planned) with 80% / 100% alerts |
 | **Mochi 🐱 & streak 🔥** | Daily bowl, nightly verdict with her picture, a live pinned status line, streak with freezes and milestones |
 | **Reports & charts 📊** | Pie picture + caption (fun facts, pace tip, AI suggestion) and a Telegram Mini App: weeks/months, savings rate, tap a slice to see its entries |
@@ -135,7 +137,7 @@ a Groq key for voice. Allow about 30 minutes.
 Get your own Telegram user ID from [@userinfobot](https://t.me/userinfobot).
 
 **2. Create the database.** New Supabase project → **SQL editor** → run every file in
-`supabase/migrations/` in order (`0001` … `0012`). Then **Connect → Transaction pooler** (port 6543) and copy
+`supabase/migrations/` in order (`0001` … `0013`). Then **Connect → Transaction pooler** (port 6543) and copy
 the URI with your password (URL-encode special characters: `@` → `%40`).
 
 **3. Configure.**
@@ -198,7 +200,7 @@ $$);
 
 ### Testing
 
-- **211 tests, 319 checks** (`tests/`). End-to-end tests run the whole bot against a real Postgres with a
+- **224 tests, 332 checks** (`tests/`). End-to-end tests run the whole bot against a real Postgres with a
   fake Telegram and a fake Claude that can return bad output or fail on purpose: malformed AI answers,
   Claude down, Groq down, silence, duplicate updates, strangers, tampered or expired Mini App signatures,
   and privacy scrubbing (`test_photos.py`).
@@ -210,7 +212,7 @@ $$);
 
 ### Limitations
 
-- **Single-user by design.** Home currency (SGD) and timezone (Singapore) are fixed; there's no in-app way
+- **Built for a few people.** Each user picks their home currency in `/setup` (before their first entry), but the timezone (Singapore) is fixed; there's no in-app way
   to delete your data. Opening it to the public would need those, plus a privacy notice and per-person cost limits.
 - **Text and photos go to Anthropic, voice to Groq** for reading. Nothing is stored there by this app, but
   the data does leave the server.
@@ -254,7 +256,7 @@ changes all use it, so they never disagree. Everything else counts as "bills".
 - `65k`, `65.000`, `1tr2` (Vietnamese shorthand for 1.2 million), `2m` and the dong sign are **VND**. An explicit currency wins: `$5`, `5 usd`, `120000 vnd`.
 - Spoken or written-out forms work too, in English or Vietnamese: “50 thousand” = 50k, “one million two” = 1.2 million,
   “two and a half million” = 2.5 million, “12 dollars 50 cents” = S$12.50, “5 US dollars” = US$5.
-- Each currency goes to its default wallet (`/wallet default VCB`) unless you name one (`pho 65k VP`, `…, Vietcombank`).
+- Each currency goes to its default wallet (`/wallet default VCB`, or tap ⭐ under `/wallet`) unless you name one (`pho 65k VP`, `…, Vietcombank`).
   A new currency gets a `Cash XXX` wallet. Every entry also stores its SGD value at that day's rate.
 
 ### Commands
@@ -262,14 +264,16 @@ changes all use it, so they never disagree. Everything else counts as "bills".
 |---|---|
 | `/today`, `/month` | Today's entries; this month as a pie picture with fun facts, the pace tip and the 📊 charts button |
 | `/balance`, `/balance DBS`, "what is my DBS balance?", `/setbalance DBS 2340.50` | All balances, or one wallet with its latest entries; correct one (the gap is recorded as an adjustment) |
-| `/wallet` | List wallets · `add GrabPay SGD ewallet` · `default Cash` · `check DBS VPBank VCB` (which wallets the monthly check covers) |
+| `/setup` | Step by step: home currency (before your first entry), currencies, wallets, default wallet per currency, month start |
+| `/wallet` | List wallets, with ⭐ buttons to change each currency's default · `add GrabPay SGD ewallet` (offers to make it the default) · `default Cash` · `check DBS VPBank VCB` (which wallets the monthly check covers) |
+| `/monthstart 26` | The day your month starts (1–28); `/monthstart` shows it with buttons |
 | `/budget` | `Food 400`, `total 1600`, `everyday 600` (Mochi's allowance), `Food off` |
 | `/recurring` | Bills you need, logged automatically: `add rent 800 on 1`, `stop 2`; `sub 3` moves one to subscriptions, `bill 3` back |
 | `/rules` | Categories learned from your corrections; `forget grab` |
 | `/persona`, `/roast`, `/language` | Sassy Cat, Asian Mom, Zen Monk or Plain; roast 0–3; EN, VI or mix |
 | `/remind 21:30` | Evening check-in time (only sent if nothing was logged) · `off` · `on` · `pause 7` |
 | `/mochi`, `/streak` | How Mochi is doing; your logging streak |
-| `/report`, `/report 2026-09`, `/report this` | Last month's (or that month's) report as a picture |
+| `/report`, `/report 2026-09`, `/report this` | Last month's (or that month's) report as a picture. With a month start day, `2026-09` is the month that starts in September (26 Sep – 25 Oct) |
 | `/check` | Balance check now |
 | `/subscriptions` | Nice-to-haves (iQIYI, Claude…) and their monthly total, incl. ones that log themselves · `scan` · `add Netflix 17.98 monthly` · `stop 2` |
 | `/recap` | This week so far as a picture (also sent Sundays at 20:00) |
@@ -286,17 +290,18 @@ changes all use it, so they never disagree. Everything else counts as "bills".
 | M2 | Budgets | Per category and total; alerts on the card at 80% and 100% |
 | M2 | Personas | The persona replies to each entry in its own message (Claude). Code gives it the facts: your usual price for that item, today's spending, your allowance, budget alerts. It questions odd prices, and you can answer it within 30 minutes. If Claude is down, a pre-written line is used. Plain = no replies |
 | M2.1 | Your history | Money Manager import (1 year), English categories incl. Groceries, recurring bills |
-| M3 | Mochi 🐱 | Daily bowl = everyday budget ÷ days in month (or your pace, if you tap "Set Mochi's bowl" under `/month`). Scored after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2. At 0 she goes to grandma's; 3 good days bring her back. Only everyday spending counts (see the rule above) |
+| M3 | Mochi 🐱 | Daily bowl = everyday budget ÷ days in your month (or your pace, if you tap "Set Mochi's bowl" under `/month`). Scored after midnight: no-spend +3, ≤50% +2, ≤100% +1, ≤150% −1, more −3, silent day −2. At 0 she goes to grandma's; 3 good days bring her back. Only everyday spending counts (see the rule above) |
 | M4 | Mochi's pictures | Seven still pictures, sent only with `/mochi` and the nightly verdict (never pinned): skinny below 40, neutral 40–69, fat 70–89, king from 90; sleeping after a no-spend day, sad after a bad day, an empty cushion while she's at grandma's. Art in `assets/mochi/`; each picture is uploaded to Telegram once and reused (`media` table). Replace a file to change the art |
 | M3 | Streak 🔥 | A day counts if you log or mark no-spend. One freeze a week (after 5 of 7 logged days). Milestones 3, 7, 14, 30, 100 with 🔔🧣👑 |
-| M3 | Monthly report | 1st at 09:00, as a pie picture (see [Charts](#charts)); the text version (totals vs last month, categories with trends, top 3, budget scorecard, fun facts, the tip) only if the picture fails |
-| M3 | Balance check | After the report, wallet by wallet: ✅ matches / ✏️ different (gap becomes an adjustment) / skip |
+| M3 | Monthly report | First day of your month at 09:00 (the 1st unless you set `/monthstart`), as a pie picture (see [Charts](#charts)); the text version (totals vs last month, categories with trends, top 3, budget scorecard, fun facts, the tip) only if the picture fails |
+| M3 | Balance check | The 1st at 09:00 (after the report when your month starts on the 1st), wallet by wallet: ✅ matches / ✏️ different (gap becomes an adjustment) / skip |
 | M4 | Photos | See below |
 | M4 | Voice | Groq Whisper (`whisper-large-v3`), English, Vietnamese or mixed, up to 2 minutes. Your wallet names are given as a spelling hint |
 | M4 | Subscriptions | See below |
 | M4 | Weekly recap & patterns | Sundays 20:00, as a pie picture with your persona's line, fun facts, the pace tip and an AI suggestion. Patterns are on the charts page. The 4-week average and "renewing this week" are only in the text version (sent if the picture fails); renewals still get their own reminder 2 days before. `/recap` any time |
 | M4 | Questions | See below |
 | M5 | Charts 📊 | See [Charts](#charts) |
+| M6 | Setup & your month | `/setup` (currencies, wallets, default wallet per currency, month start), ⭐ default-wallet buttons, `/monthstart`, the wallet's balance on every card. `meow/setup_flow.py`, `meow/periods.py` |
 
 ### Charts
 `/month`, `/report` and `/recap` (and the Sunday recap and the report on the 1st) arrive as one **pie picture**
@@ -400,7 +405,7 @@ before anything is saved or recorded. Sending a screenshot as a file (📎 → F
 | `meow/insights.py`, `meow/ask.py` | Patterns and the weekly recap; answering questions |
 | `meow/report_data.py`, `meow/report_picture.py` | A week or month as numbers; the pie picture (Pillow, Inter font in `assets/fonts/`) |
 | `meow/webapp.py`, `meow/webapp/report.html` | The charts Mini App: signature check, data, page |
-| `supabase/migrations/` | Database schema, applied in order (0001 to 0012 are on your project) |
+| `supabase/migrations/` | Database schema, applied in order (0001 to 0013) |
 | `scripts/` | Local tools, see [Scripts](#scripts) |
 | `tests/` | See [Testing](#testing) |
 
@@ -414,7 +419,7 @@ Pushing to `main` deploys to Vercel automatically.
 ### The scheduler
 Supabase `pg_cron` calls the Vercel app every 15 minutes with an `X-Cron-Secret` header (stored in Supabase
 Vault as `meow_cron_secret`; the same value is `CRON_SECRET` in Vercel). Each tick: exchange rates, entries
-saved without a rate, due recurring bills, Mochi's score after midnight, the monthly report on the 1st,
+saved without a rate, due recurring bills, Mochi's score after midnight, the monthly report on the first day of each user's month, the balance check on the 1st,
 the subscription check (daily from 10:00), the weekly recap (Sundays from 20:00) and evening check-ins.
 Every step is safe to repeat: daily and weekly jobs are claimed once in `job_runs`.
 
@@ -427,7 +432,8 @@ Every step is safe to repeat: daily and weekly jobs are claimed once in `job_run
 | `GROQ_API_KEY` | | Voice notes (no key = voice off) |
 | `ALLOWED_USER_IDS` | | Your Telegram ID; comma-separate to add testers |
 | `CRON_SECRET` | | Shared with the Supabase scheduler |
-| `HOME_CURRENCY`, `DEFAULT_TIMEZONE` | `SGD`, `Asia/Singapore` | |
+| `HOME_CURRENCY`, `DEFAULT_TIMEZONE` | `SGD`, `Asia/Singapore` | New users' home currency until they pick one in `/setup` |
+| `STARTER_WALLETS` | (none) | e.g. `DBS:SGD,VP:VND`: wallets every new user gets before `/setup`. Empty = they pick their own |
 | `PUBLIC_URL` | `https://meow-finance.vercel.app` | Where the charts page is served |
 | `ANTHROPIC_MODEL`, `PERSONA_MODEL`, `VISION_MODEL` | `claude-haiku-4-5` | Models for parsing, persona replies, photos |
 | `STT_MODEL` | `whisper-large-v3` | Groq speech model |
@@ -465,7 +471,7 @@ select source, parser, count(distinct batch_id) from transactions where reverses
 
 ## Testing
 
-**211 tests, 319 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
+**224 tests, 332 checks.** Some tests run once per example (e.g. 49 sample messages through the parser),
 which is why there are more checks than tests. `tests/README.md` lists every test by name.
 
 ### Two kinds of test
@@ -502,6 +508,7 @@ and `eval_*` scripts, and one test checks that every Claude call matches the rea
 | `test_insights.py` | Both | Weekend/rising/budget-pace rules; entry vs question; questions answered from the ledger; Sunday recap; patterns in the report | 20 |
 | `test_charts.py` | Both | Periods and pie slices, Telegram's signature, the data route, the picture, buttons on every report | 23 |
 | `test_mochi_art.py` | Both | Which picture for her weight and day, upload once and reuse, grandma's, fallback to text, nightly verdict | 7 |
+| `test_setup.py` | Both | Month periods; `/setup` for new and existing users, typed names and days, old buttons; default-wallet buttons; the balance on the card; month start for `/month`, budgets, Mochi, the report and the balance check | 13 |
 
 ### Running them
 ```bash
@@ -510,8 +517,8 @@ python -m pytest -q tests/test_photos.py    # one file
 python -m pytest -q -k duplicate            # tests with "duplicate" in the name
 python -m pytest -v                         # print each test as it runs
 ```
-Without `TEST_DATABASE_URL` you'll see about **148 passed, 171 skipped**: the end-to-end tests skip.
-To run all 319, install Postgres 16, create an empty database, and set for example
+Without `TEST_DATABASE_URL` you'll see about **149 passed, 183 skipped**: the end-to-end tests skip.
+To run all 332, install Postgres 16, create an empty database, and set for example
 `TEST_DATABASE_URL=postgresql://postgres@localhost:5432/meow_test` (the tests wipe it; never point it at Supabase).
 
 In VS Code: the **Testing** panel (flask icon) runs single tests with a click. Choose **pytest** and the `tests` folder.

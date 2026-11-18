@@ -4,12 +4,12 @@ Pure functions only; the bot stores state in mochi_state / mochi_log.
 """
 from __future__ import annotations
 
-import calendar
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from . import periods
 from .money import fmt
 
 RETURN_WEIGHT = 20     # weight when she comes back from grandma's
@@ -34,17 +34,18 @@ RESULTS = {  # result -> weight change
 }
 
 
-def bowl(everyday_budget_minor: int, day: date) -> int:
-    """Today's food bowl: the everyday budget spread over the month's days."""
-    return everyday_budget_minor // calendar.monthrange(day.year, day.month)[1]
+def bowl(everyday_budget_minor: int, day: date, start_day: int = 1) -> int:
+    """Today's food bowl: the everyday budget spread over the days of the user's month
+    (a calendar month, or e.g. 26 Oct – 25 Nov when the month starts on the 26th)."""
+    return everyday_budget_minor // periods.length(day, start_day)
 
 
-def bowl_on(state: Optional[dict], everyday_budget_minor: int, day: date) -> int:
+def bowl_on(state: Optional[dict], everyday_budget_minor: int, day: date, start_day: int = 1) -> int:
     """The bowl for `day`: your own daily pace if you set one for the rest of that month, else the usual."""
     o, since = (state or {}).get("bowl_override_minor"), (state or {}).get("bowl_override_from")
-    if o and since and since <= day and (since.year, since.month) == (day.year, day.month):
+    if o and since and since <= day and periods.bounds(since, start_day) == periods.bounds(day, start_day):
         return o
-    return bowl(everyday_budget_minor, day)
+    return bowl(everyday_budget_minor, day, start_day)
 
 
 def result_for(spent: int, bowl_minor: int, logged: bool) -> str:

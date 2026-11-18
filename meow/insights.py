@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from html import escape
 from typing import Optional
 
-from . import db
+from . import db, periods
 from .money import fmt
 
 MIN_PATTERN = 2000  # S$20 in minor units: smaller differences aren't worth a comment
@@ -61,12 +61,14 @@ def rising_categories(weekly: list[dict[str, int]], home: str) -> list[Insight]:
     return out
 
 
-def budget_pace(spent: int, limit: int, today: date, name: str, home: str, fixed: int = 0) -> Optional[Insight]:
+def budget_pace(spent: int, limit: int, today: date, name: str, home: str, fixed: int = 0,
+                start_day: int = 1) -> Optional[Insight]:
     """'At this pace you'll hit your Shopping budget on the 22nd.' `fixed` (rent, bills) counts once,
-    not as a daily rate: S$800 rent on the 1st doesn't mean S$800 more every day."""
-    first = today.replace(day=1)
-    days_in_month = ((first + timedelta(days=32)).replace(day=1) - first).days
-    elapsed = today.day
+    not as a daily rate: S$800 rent on the 1st doesn't mean S$800 more every day.
+    The month is the user's own (it may start on the 26th, say)."""
+    first, nxt = periods.bounds(today, start_day)
+    days_in_month = (nxt - first).days
+    elapsed = (today - first).days + 1
     if spent <= 0 or elapsed < 3:
         return None
     if spent >= limit:
@@ -78,8 +80,9 @@ def budget_pace(spent: int, limit: int, today: date, name: str, home: str, fixed
     if hit_day > days_in_month:
         return None
     hit = first + timedelta(days=hit_day - 1)
-    return Insight(f"⏳ At this pace you'll hit your <b>{escape(name)}</b> budget on the "
-                   f"<b>{hit.day}{_suffix(hit.day)}</b> ({fmt(spent, home)} of {fmt(limit, home)} so far).",
+    when = f"the <b>{hit.day}{_suffix(hit.day)}</b>" if start_day == 1 else f"<b>{hit.day} {hit:%b}</b>"
+    return Insight(f"⏳ At this pace you'll hit your <b>{escape(name)}</b> budget on "
+                   f"{when} ({fmt(spent, home)} of {fmt(limit, home)} so far).",
                    200 - (hit_day - elapsed))
 
 
@@ -105,8 +108,8 @@ def find(conn, user: dict, today: date) -> list[Insight]:
         weekly.append({r["category"]: -(r["total"] or 0) for r in rows if r["type"] == "expense"})
     found += rising_categories(weekly, home)
 
-    first = today.replace(day=1)
-    nxt = (first + timedelta(days=32)).replace(day=1)
+    sd = periods.start_day(user)
+    first, nxt = periods.bounds(today, sd)
     spent_by_cat = db.month_spent_home(conn, uid, first, nxt)
     everyday_month = db.everyday_spent(conn, uid, first, nxt)
     for b in db.budgets(conn, uid):
@@ -114,12 +117,12 @@ def find(conn, user: dict, today: date) -> list[Insight]:
             continue  # rent and bills don't have a "pace"
         spent = spent_by_cat.get(b["category_id"], 0)
         fixed = max(spent - everyday_month, 0) if b["category_id"] is None else 0
-        p = budget_pace(spent, b["limit_minor"], today, b["name"] or "Total", home, fixed)
+        p = budget_pace(spent, b["limit_minor"], today, b["name"] or "Total", home, fixed, sd)
         if p:
             found.append(p)
     everyday = user.get("everyday_budget_minor")
     if everyday:
-        p = budget_pace(everyday_month, everyday, today, "everyday", home)
+        p = budget_pace(everyday_month, everyday, today, "everyday", home, start_day=sd)
         if p:
             found.append(p)
     found.sort(key=lambda i: -i.weight)

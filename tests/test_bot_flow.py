@@ -5,12 +5,12 @@ from tests.support import ME, STRANGER, buttons
 
 
 def test_start_seeds_wallets_and_categories(env):
-    msg = env.say("/start")
-    assert "DBS" in msg.text and "VP" in msg.text
+    msg = env.say("/start")  # the tests' settings give new users DBS and VP (STARTER_WALLETS); see test_setup.py
+    assert "Your home currency" in msg.text and "Hi Tam" in env.tg.sent[-2].text
     wallets = env.conn.execute("select name, currency, is_default from wallets order by id").fetchall()
     assert [(w["name"], w["currency"], w["is_default"]) for w in wallets] == [("DBS", "SGD", True), ("VP", "VND", True)]
     assert env.conn.execute("select count(*) n from categories").fetchone()["n"] == 19
-    env.say("/start")  # idempotent
+    assert "Welcome back" in env.say("/start").text  # idempotent
     assert env.conn.execute("select count(*) n from wallets").fetchone()["n"] == 2
 
 

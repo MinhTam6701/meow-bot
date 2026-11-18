@@ -5,11 +5,10 @@ Amounts are integer minor units of the home currency; `*_text` fields are alread
 """
 from __future__ import annotations
 
-import calendar
 from datetime import date, timedelta
 from typing import Optional
 
-from . import db, insights, mochi, report
+from . import db, insights, mochi, periods, report
 from .money import fmt, minor_digits
 
 KINDS = ("week", "month")
@@ -17,21 +16,22 @@ MIN_CHANGE = 1000  # S$10: smaller moves between categories aren't worth a fact
 PIE_SLICES = 5  # biggest categories; the rest is "Other"
 
 
-def bounds(kind: str, day: date) -> tuple[date, date]:
-    """The period containing `day`: (first day, first day of the next period)."""
+def bounds(kind: str, day: date, start_day: int = 1) -> tuple[date, date]:
+    """The period containing `day`: (first day, first day of the next period).
+    A month is the user's own month: it starts on their month start day."""
     if kind == "week":
         start = insights.week_start(day)
         return start, start + timedelta(days=7)
-    return report.month_bounds(day.replace(day=1))
+    return periods.bounds(day, start_day)
 
 
-def previous_start(kind: str, start: date) -> date:
-    return start - timedelta(days=7) if kind == "week" else report.previous_month(start)
+def previous_start(kind: str, start: date, start_day: int = 1) -> date:
+    return start - timedelta(days=7) if kind == "week" else periods.previous(start, start_day)
 
 
 def label(kind: str, start: date, end: date) -> str:
     if kind == "month":
-        return start.strftime("%B %Y")
+        return periods.label(start, end)
     last = end - timedelta(days=1)
     if start.month == last.month:
         return f"{start.day} – {last.day} {last.strftime('%b %Y')}"
@@ -103,7 +103,7 @@ def pace(conn, user: dict, kind: str, start: date, end: date, today: date, curre
         allowance = budget
         name = f"your {fmt(budget, home)} everyday budget"
     else:
-        allowance = budget * 7 // calendar.monthrange(start.year, start.month)[1]
+        allowance = budget * 7 // periods.length(start, periods.start_day(user))
         name = f"this week's {fmt(allowance, home)} share of your everyday budget"
     if not current:
         diff = allowance - db.everyday_spent(conn, uid, start, end)
@@ -126,12 +126,13 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
     uid, home = user["telegram_id"], user["home_currency"]
-    start, end = bounds(kind, min(day, today))
+    sd = periods.start_day(user)
+    start, end = bounds(kind, min(day, today), sd)
     current = start <= today < end
     # The current period is compared with the same number of days of the one before.
     days = ((today + timedelta(days=1)) if current else end) - start
-    prev_start = previous_start(kind, start)
-    _, prev_full_end = bounds(kind, prev_start)
+    prev_start = previous_start(kind, start, sd)
+    _, prev_full_end = bounds(kind, prev_start, sd)
     prev_end = min(prev_start + days, prev_full_end)
 
     totals = report._totals(conn, uid, start, end)
@@ -197,7 +198,7 @@ def build(conn, user: dict, kind: str, day: date, today: date) -> dict:
     if pace_tip and kind == "month" and pace_tip["per_day"]:
         state = db.mochi_state(conn, uid)
         # The new bowl starts today, so /today, the pinned line and tonight's score all use it at once.
-        if state and mochi.bowl_on(state, user["everyday_budget_minor"], today) != pace_tip["per_day"]:
+        if state and mochi.bowl_on(state, user["everyday_budget_minor"], today, sd) != pace_tip["per_day"]:
             pace_tip["bowl_offer"] = {"minor": pace_tip["per_day"], "from": today.isoformat(),
                                       "text": f"🐱 Set Mochi's bowl to {fmt(pace_tip['per_day'], home)}/day"}
 

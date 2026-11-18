@@ -16,6 +16,18 @@ def _ids(raw: str) -> set[int]:
     return {int(x) for x in raw.replace(" ", "").split(",") if x}
 
 
+def _wallets(raw: str) -> list[tuple[str, str, str, bool]]:
+    """STARTER_WALLETS="DBS:SGD,VP:VND": wallets every new user gets before /setup (default: none).
+    The first wallet of each currency is its default."""
+    out, seen = [], set()
+    for item in raw.replace(" ", "").split(","):
+        if ":" in item:
+            name, cur = item.split(":", 1)
+            out.append((name, "cash" if name.lower() == "cash" else "bank", cur.upper(), cur.upper() not in seen))
+            seen.add(cur.upper())
+    return out
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
@@ -27,6 +39,8 @@ class Settings:
     allowed_user_ids: set[int] = field(default_factory=lambda: _ids(os.getenv("ALLOWED_USER_IDS", "")))
     home_currency: str = field(default_factory=lambda: os.getenv("HOME_CURRENCY", "SGD"))
     default_timezone: str = field(default_factory=lambda: os.getenv("DEFAULT_TIMEZONE", "Asia/Singapore"))
+    # New users pick their own currencies and wallets in /setup; these are created before it, if set.
+    starter_wallets: list = field(default_factory=lambda: _wallets(os.getenv("STARTER_WALLETS", "")))
     # Sent by the Supabase scheduler to /api/... as X-Cron-Secret.
     cron_secret: str = field(default_factory=lambda: os.getenv("CRON_SECRET", ""))
     # A single expense at or above this (home currency) gets the "big spend" comment.

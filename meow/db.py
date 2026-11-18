@@ -15,7 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from .defaults import DEFAULT_CATEGORIES, DEFAULT_WALLETS
+from .defaults import DEFAULT_CATEGORIES
 from .models import CategoryInfo, WalletInfo
 
 
@@ -51,8 +51,10 @@ def get_user(conn, telegram_id: int) -> Optional[dict]:
     return conn.execute("select * from users where telegram_id = %s", (telegram_id,)).fetchone()
 
 
-def ensure_user(conn, telegram_id: int, first_name: str, home_currency: str, timezone: str) -> tuple[dict, bool]:
-    """Returns (user, created). New users get the default wallets and categories."""
+def ensure_user(conn, telegram_id: int, first_name: str, home_currency: str, timezone: str,
+                starter_wallets: Optional[list] = None) -> tuple[dict, bool]:
+    """Returns (user, created). New users get the starter categories, and `starter_wallets` if any:
+    otherwise they pick their own currencies and wallets in /setup."""
     user = get_user(conn, telegram_id)
     if user:
         return user, False
@@ -66,7 +68,7 @@ def ensure_user(conn, telegram_id: int, first_name: str, home_currency: str, tim
             "insert into categories (user_id, name, emoji, type, sort_order) values (%s, %s, %s, %s, %s)",
             (telegram_id, name, emoji, type_, i),
         )
-    for name, type_, currency, is_default in DEFAULT_WALLETS:
+    for name, type_, currency, is_default in starter_wallets or []:
         conn.execute(
             "insert into wallets (user_id, name, type, currency, is_default) values (%s, %s, %s, %s, %s)",
             (telegram_id, name, type_, currency, is_default),
@@ -113,7 +115,7 @@ def create_cash_wallet(conn, user_id: int, currency: str, name: Optional[str] = 
     r = conn.execute(
         """insert into wallets (user_id, name, type, currency, is_default)
            values (%s, %s, 'cash', %s, %s)
-           on conflict (user_id, name) do update set archived = false
+           on conflict (user_id, name) do update set archived = false, is_default = false
            returning id, name, currency, is_default""",
         (user_id, name or f"Cash {currency}", currency, not has_default),
     ).fetchone()
@@ -303,7 +305,7 @@ def llm_calls_since(conn, user_id: int, since) -> int:
 # --- M2: settings ----------------------------------------------------------------
 
 USER_FIELDS = {"reminder_time", "reminders_on", "reminders_paused_until", "last_reminded_on",
-               "snooze_until", "persona", "roast_level", "language", "full_name"}
+               "snooze_until", "persona", "roast_level", "language", "full_name", "home_currency"}
 
 
 def update_user(conn, telegram_id: int, **fields) -> None:
@@ -652,6 +654,40 @@ def set_everyday_budget(conn, user_id: int, minor: Optional[int]) -> None:
 def set_bowl_override(conn, user_id: int, minor: Optional[int], since: Optional[date]) -> None:
     conn.execute("update mochi_state set bowl_override_minor = %s, bowl_override_from = %s, updated_at = now() "
                  "where user_id = %s", (minor, since, user_id))
+
+
+def set_month_start(conn, user_id: int, day: int) -> None:
+    conn.execute("update users set month_start_day = %s where telegram_id = %s", (day, user_id))
+    set_bowl_override(conn, user_id, None, None)  # a pace set for the old month no longer fits
+
+
+def set_setup(conn, user_id: int, state: Optional[dict]) -> None:
+    conn.execute("update users set setup = %s where telegram_id = %s",
+                 (Jsonb(state) if state is not None else None, user_id))
+
+
+def has_entries(conn, user_id: int) -> bool:
+    return conn.execute("select 1 from transactions where user_id = %s limit 1", (user_id,)).fetchone() is not None
+
+
+def add_setup_wallet(conn, user_id: int, name: str, type_: str, currency: str) -> Optional[WalletInfo]:
+    """A wallet picked in /setup: brings back an archived one with that name and currency.
+    None if the name is taken by a wallet in another currency."""
+    r = conn.execute(
+        """insert into wallets (user_id, name, type, currency, is_default)
+           values (%s, %s, %s, %s, not exists (select 1 from wallets where user_id = %s and currency = %s
+                                              and is_default and not archived))
+           on conflict (user_id, name) do update set archived = false, is_default = false
+               where wallets.currency = excluded.currency
+           returning id, name, currency, is_default""",
+        (user_id, name, type_, currency, user_id, currency)).fetchone()
+    return WalletInfo(r["id"], r["name"], r["currency"], r["is_default"]) if r else None
+
+
+def all_wallet_names(conn, user_id: int) -> dict[str, tuple[str, str]]:
+    """Lower-case name -> (name, currency), archived wallets included (names are unique per user)."""
+    rows = conn.execute("select name, currency from wallets where user_id = %s", (user_id,)).fetchall()
+    return {r["name"].lower(): (r["name"], r["currency"]) for r in rows}
 
 
 def set_awaiting(conn, user_id: int, value: Optional[str]) -> None:

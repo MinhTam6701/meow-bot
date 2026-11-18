@@ -17,7 +17,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from . import budgets as bud
-from . import ask, db, fx, insights, mochi, persona_llm, report, report_data, speech, streak as streaks
+from . import ask, db, fx, insights, mochi, periods, persona_llm, report, report_data, speech, streak as streaks
 from . import webapp
 from .cards import (category_picker, language_keyboard, pause_keyboard, persona_keyboard, reminder_keyboard,
                     render_card, roast_keyboard, totals_line_home, wallet_picker)
@@ -29,6 +29,7 @@ from .parser_llm import cost_usd
 from .parser_rules import parse_with_rules
 from .text import phrase_keys, phrase_words
 from .photo_flow import PhotoFlow, image_of
+from .setup_flow import SetupFlow
 from .subs_flow import SubscriptionFlow
 from .personas import LANGUAGES, PERSONAS, ROAST_LABELS, line as persona_line
 from .telegram import TelegramAPI
@@ -48,16 +49,18 @@ Just type what you spent or received:
 Ask about your spending too: <i>how much on Grab in August?</i>
 
 Plain numbers are SGD. <code>65k</code>, <code>65.000</code> or <code>1tr2</code> are VND.
-Name a wallet to use it; otherwise each currency goes to its default wallet (/wallet default).
+Name a wallet to use it (<code>lunch 12 OCBC</code>); otherwise each currency goes to its default wallet (/wallet default).
 
 <b>Commands</b>
 /today – today's entries
-/month – this month by category, in SGD
+/month – this month by category, in your home currency
 /budget – monthly budgets
 /balance – wallet balances · /balance DBS for one
 /setbalance – match a wallet to your bank, e.g. /setbalance DBS 2340.50
-/wallet – add or list wallets
+/wallet – add or list wallets, change the default
 /wallet check – choose which wallets the monthly check covers
+/monthstart – the day your month starts (e.g. the day after payday)
+/setup – currencies, wallets and month start, step by step
 /recurring – rent and bills that log themselves
 /remind – daily reminder time
 /mochi – how Mochi is doing
@@ -78,7 +81,9 @@ COMMANDS = [
     ("month", "This month by category"),
     ("budget", "Monthly budgets, e.g. /budget Food 400"),
     ("balance", "Wallet balances"),
-    ("wallet", "Wallets: list, add, or /wallet check to pick checked ones"),
+    ("wallet", "Wallets: list, add, change the default"),
+    ("monthstart", "The day your month starts, e.g. /monthstart 26"),
+    ("setup", "Currencies, wallets and month start, step by step"),
     ("setbalance", "Set a wallet balance, e.g. /setbalance DBS 2340.50"),
     ("recurring", "Rent and bills that log themselves"),
     ("remind", "Daily reminder, e.g. /remind 21:30"),
@@ -125,7 +130,7 @@ def merge_invented_split(entries: list[Entry], pending: str, answer: str) -> lis
     return [first.model_copy(update={"amount": given, "description": " and ".join(e.description for e in entries)[:200]})]
 
 
-class Bot(PhotoFlow, SubscriptionFlow):
+class Bot(PhotoFlow, SubscriptionFlow, SetupFlow):
     def __init__(self, settings: Settings, tg: TelegramAPI, llm_client: Any = None,
                  clock: Optional[Callable[[], datetime]] = None,
                  fx_fetch: Optional[fx.Fetcher] = None, rng: Optional[random.Random] = None,
@@ -173,7 +178,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             return
 
         user, created = db.ensure_user(conn, sender["id"], sender.get("first_name", ""),
-                                       self.s.home_currency, self.s.default_timezone)
+                                       self.s.home_currency, self.s.default_timezone, self.s.starter_wallets)
         if created:
             user = db.get_user(conn, sender["id"])  # pick up column defaults
         voice = msg.get("voice") or msg.get("audio")
@@ -371,7 +376,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         batch = db.get_batch(conn, batch_id)
         for r in batch:
             r["card_note"] = note
-        text_out, keyboard = render_card(batch, today, self.footer(conn, user, today), user["home_currency"])
+        text_out, keyboard = self.card(conn, user, batch, today)
         sent = self.tg.send_message(chat_id, text_out, reply_markup=keyboard)
         if sent:
             db.set_card(conn, batch_id, chat_id, sent["message_id"], note)
@@ -380,6 +385,16 @@ class Bot(PhotoFlow, SubscriptionFlow):
         except Exception:  # the entry is saved; a missing comment must never undo it
             log.exception("persona reaction failed")
         self.update_pinned_quietly(conn, user)
+
+    def card(self, conn, user: dict, batch: list[dict], today: date, footer: Optional[str] = None) -> tuple[str, dict]:
+        """The confirm card, with the balance left in each wallet the entries touched."""
+        seen: dict[int, tuple[str, int, str]] = {}
+        for r in batch:
+            if r["wallet_id"] not in seen:
+                seen[r["wallet_id"]] = (r["wallet_name"], db.wallet_balance(conn, r["wallet_id"]), r["currency"])
+        if footer is None:
+            footer = self.footer(conn, user, today)
+        return render_card(batch, today, footer, user["home_currency"], list(seen.values()))
 
     def update_pinned_quietly(self, conn, user: dict) -> None:
         """Keep the pinned Mochi line in step with what was just logged or undone (edit only)."""
@@ -405,7 +420,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             return None
         s = self.streak(conn, uid, today).current
         return mochi.status_line(state["weight"], state["away"], db.spent_for_mochi(conn, uid, today),
-                                 mochi.bowl_on(state, budget, today), user["home_currency"],
+                                 mochi.bowl_on(state, budget, today, periods.start_day(user)), user["home_currency"],
                                  no_spend_marked=db.no_spend_marked(conn, uid, today),
                                  accessory=streaks.accessory(s), streak=s)
 
@@ -419,9 +434,11 @@ class Bot(PhotoFlow, SubscriptionFlow):
         st = self.streak(conn, uid, today)
         hist = db.mochi_history(conn, uid, 7)
         week = " ".join(f"{mochi.RESULTS[h['result']]:+d}" for h in reversed(hist)) or "no days scored yet"
-        bowl = mochi.bowl_on(state, user["everyday_budget_minor"], today)
-        how = ("your pace for the rest of the month" if bowl != mochi.bowl(user["everyday_budget_minor"], today)
-               else "everyday budget ÷ days in the month")
+        sd = periods.start_day(user)
+        bowl = mochi.bowl_on(state, user["everyday_budget_minor"], today, sd)
+        how = ("your pace for the rest of the month" if bowl != mochi.bowl(user["everyday_budget_minor"], today, sd)
+               else "everyday budget ÷ days in the month" + ("" if sd == 1 else
+                                                             f" ({periods.label(*periods.bounds(today, sd))})"))
         return (f"🐱 <b>Mochi</b>\n\n{line}\n\n"
                 f"Daily bowl: {fmt(bowl, user['home_currency'])} ({how})\n"
                 "Housing, phone, subscriptions, study and anything tagged #planned don't count.\n"
@@ -469,7 +486,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         logged = db.logged_days(conn, uid, day - timedelta(days=1))
         while day < today:
             spent = db.spent_for_mochi(conn, uid, day)
-            bowl = mochi.bowl_on(state, budget, day)
+            bowl = mochi.bowl_on(state, budget, day, periods.start_day(user))
             result = mochi.result_for(spent, bowl, day in logged)
             last = mochi.score(weight, away, result, db.recent_mochi_results(conn, uid))
             if db.save_mochi_day(conn, uid, day, spent, bowl, last):
@@ -643,7 +660,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         budget = user.get("everyday_budget_minor")
         state = db.mochi_state(conn, uid) if budget else None
         if state:
-            bowl = mochi.bowl_on(state, budget, today)
+            bowl = mochi.bowl_on(state, budget, today, periods.start_day(user))
             used = db.spent_for_mochi(conn, uid, today)
             left = bowl - used
             lines.append(f"Daily allowance for everyday spending: {fmt(bowl, home)}; "
@@ -678,8 +695,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
     def budget_alerts(self, conn, user: dict, rows: list[dict], today: date) -> list[str]:
         uid, home = user["telegram_id"], user["home_currency"]
-        first = today.replace(day=1)
-        nxt = (first + timedelta(days=32)).replace(day=1)
+        first, nxt = periods.bounds(today, periods.start_day(user))
         this_month = [r for r in rows if r["type"] == "expense" and first <= r["occurred_on"] < nxt
                       and r["amount_home"] is not None]
         if not this_month:
@@ -795,7 +811,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         batch = db.get_batch(conn, batch_id)
         for r in batch:
             r["card_note"] = note
-        text_out, keyboard = render_card(batch, today, "", home)
+        text_out, keyboard = self.card(conn, user, batch, today, footer="")
         sent = self.tg.send_message(chat_id, text_out, reply_markup=keyboard)
         if sent:
             db.set_card(conn, batch_id, chat_id, sent["message_id"], note)
@@ -810,13 +826,16 @@ class Bot(PhotoFlow, SubscriptionFlow):
     # ------------------------------------------------------------------ commands
     def cmd_start(self, conn, user, chat_id, args, created=False):
         name = escape(user.get("first_name") or "there")
-        intro = (f"🐱 Hi {name}! I'm <b>M.E.O.W.</b>, your Expense &amp; Outflow Watcher.\n\n"
-                 "I've set up two wallets: <b>DBS</b> (SGD) and <b>VP</b> (VND), plus some starter categories.\n"
-                 "Tip: set your real balances first, e.g. <code>/setbalance DBS 2340.50</code>\n"
-                 "I'll check in at 21:30 if you haven't logged anything. Change it with /remind.\n\n")
         if not created:
-            intro = f"🐱 Welcome back, {name}!\n\n"
-        self.tg.send_message(chat_id, intro + HELP)
+            self.tg.send_message(chat_id, f"🐱 Welcome back, {name}!\n"
+                                          "Change your currencies, wallets or month start any time with /setup.\n\n"
+                                          + HELP)
+            return
+        self.tg.send_message(chat_id, f"🐱 Hi {name}! I'm <b>M.E.O.W.</b>, your Expense &amp; Outflow Watcher.\n\n"
+                                      "Let's set you up in a minute: your currencies, your wallets (and which one "
+                                      "is the default for each currency), and the day your month starts.\n"
+                                      "I'll check in at 21:30 if you haven't logged anything. Change it with /remind.")
+        self.start_setup(conn, user, chat_id, new=True)
 
     def cmd_help(self, conn, user, chat_id, args, **_):
         self.tg.send_message(chat_id, HELP)
@@ -839,17 +858,16 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
     def cmd_month(self, conn, user, chat_id, args, **_):
         uid, today, home = user["telegram_id"], self.today_for(user), user["home_currency"]
-        first = today.replace(day=1)
-        nxt = (first + timedelta(days=32)).replace(day=1)
+        first, nxt = periods.bounds(today, periods.start_day(user))
         rows = db.month_by_category_home(conn, uid, first, nxt)
-        title = f"📊 <b>{first.strftime('%B %Y')}</b> · in {home}"
+        title = f"📊 <b>{periods.label(first, nxt)}</b> · in {home}"
         if not rows:
             self.tg.send_message(chat_id, f"{title}\n\nNothing logged this month yet.",
-                                 self.chart_button("month", first))
+                                 self.chart_button("month", first, user))
             return
         if self.send_chart(conn, user, chat_id, "month", first):
             return
-        charts = self.chart_button("month", first)
+        charts = self.chart_button("month", first, user)
         limits = {b["category_id"]: b["limit_minor"] for b in db.budgets(conn, uid)}
         exp = [r for r in rows if r["type"] == "expense"]
         inc = [r for r in rows if r["type"] == "income"]
@@ -986,16 +1004,16 @@ class Bot(PhotoFlow, SubscriptionFlow):
                  "Remove one with <code>/budget Food off</code>.")
         if not args:
             today = self.today_for(user)
-            first = today.replace(day=1)
-            spent = db.month_spent_home(conn, uid, first, (first + timedelta(days=32)).replace(day=1))
+            first, nxt = periods.bounds(today, periods.start_day(user))
+            spent = db.month_spent_home(conn, uid, first, nxt)
             items = db.budgets(conn, uid)
             everyday = user.get("everyday_budget_minor")
             if not items and not everyday:
                 self.tg.send_message(chat_id, f"💰 <b>Budgets</b>\n\nNo budgets yet. {usage}")
                 return
-            lines = [f"💰 <b>Budgets</b> · {first.strftime('%B')}", ""]
+            lines = [f"💰 <b>Budgets</b> · {first.strftime('%B') if first.day == 1 else periods.label(first, nxt)}", ""]
             if everyday:
-                e = db.everyday_spent(conn, uid, first, (first + timedelta(days=32)).replace(day=1))
+                e = db.everyday_spent(conn, uid, first, nxt)
                 lines.append(f"🐱 Everyday (Mochi · no rent, bills, study)\n{bud.bar(e, everyday)} {fmt(e, home)} / {fmt(everyday, home)} "
                              f"({bud.pct(e, everyday)}%)")
             for b in items:
@@ -1027,7 +1045,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             db.ensure_mochi(conn, uid, today)
             self.tg.send_message(chat_id, f"🐱 Everyday budget: <b>{fmt(minor, home)}</b> a month "
                                           f"(housing, phone, subscriptions, study and #planned buys don't count).\n"
-                                          f"Mochi's bowl today: <b>{fmt(mochi.bowl(minor, today), home)}</b>. "
+                                          f"Mochi's bowl today: <b>{fmt(mochi.bowl(minor, today, periods.start_day(user)), home)}</b>. "
                                           f"She eats what you don't spend!")
             self.refresh_pinned(conn, db.get_user(conn, uid), today)
             return
@@ -1106,6 +1124,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
                                       f"Language: {LANGUAGES.get(user['language'], user['language'])} (/language)\n"
                                       f"Daily check-in: {rem} (/remind)\n"
                                       f"Home currency: {user['home_currency']}\n"
+                                      f"Month starts on: {periods.describe(periods.start_day(user))} (/monthstart)\n"
                                       f"Timezone: {user['timezone']}\n"
                                       f"Your full name: {escape(user.get('full_name') or 'not set')} (/myname)")
 
@@ -1127,7 +1146,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
         uid = user["telegram_id"]
         parts = args.split()
         usage = ("Add one: <code>/wallet add Cash SGD cash</code> (types: cash, bank, ewallet, credit)\n"
-                 "Make one the default for its currency: <code>/wallet default Cash</code>\n"
+                 "Make one the default for its currency: <code>/wallet default Cash</code> or tap below\n"
                  "Choose which ones the monthly balance check asks about: <code>/wallet check DBS VPBank VCB</code>")
         if not parts:
             ws = db.wallets(conn, uid)
@@ -1135,7 +1154,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             lines = ["👛 <b>Wallets</b>", ""] + [
                 f"• {escape(w.name)} ({w.currency})" + (" · default" if w.is_default else "")
                 + (" · 🏦 checked monthly" if w.id in checked else "") for w in ws]
-            self.tg.send_message(chat_id, "\n".join(lines + ["", usage]))
+            self.tg.send_message(chat_id, "\n".join(lines + ["", usage]), self.default_buttons(conn, uid))
             return
         if parts[0].lower() == "check":
             ws = db.wallets(conn, uid)
@@ -1171,9 +1190,21 @@ class Bot(PhotoFlow, SubscriptionFlow):
                 self.tg.send_message(chat_id, f"You already have a wallet called {escape(name)}.")
                 return
             w = db.add_wallet(conn, uid, name, type_, cur)
-            extra = " It's now the default for " + cur + "." if w.is_default else ""
+            current = next((x.name for x in db.wallets(conn, uid) if x.currency == cur and x.is_default), None)
+            extra = (f" It's now the default for {cur}." if w.is_default
+                     else f" Your default {cur} wallet is still {escape(current or 'unset')}.")
+            offer = None if w.is_default else {"inline_keyboard": [[
+                {"text": f"⭐ Make {w.name} the default {cur} wallet", "callback_data": f"wd:s:{w.id}"}]]}
             self.tg.send_message(chat_id, f"👛 Added <b>{escape(w.name)}</b> ({cur}, {type_}).{extra}\n"
-                                          f"Set its balance: <code>/setbalance {escape(w.name)} 100</code>")
+                                          f"Set its balance: <code>/setbalance {escape(w.name)} 100</code>", offer)
+            return
+        if parts[0].lower() == "default" and len(parts) == 1:
+            kb = self.default_buttons(conn, uid)
+            if kb is None:
+                self.tg.send_message(chat_id, "Each currency has only one wallet, so it's already the default.\n"
+                                              "Add another: <code>/wallet add OCBC SGD</code>")
+            else:
+                self.tg.send_message(chat_id, "⭐ Tap a currency to change its default wallet:", kb)
             return
         if parts[0].lower() == "default" and len(parts) == 2:
             w = next((w for w in db.wallets(conn, uid) if w.name.lower() == parts[1].lower()), None)
@@ -1291,7 +1322,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
             batch = db.get_batch(conn, batch_id)
             for b in batch:
                 b["card_note"] = note
-            text_out, kb = render_card(batch, today, self.footer(conn, user, today), home)
+            text_out, kb = self.card(conn, user, batch, today)
             sent = self.tg.send_message(uid, text_out, reply_markup=kb)
             if sent:
                 db.set_card(conn, batch_id, uid, sent["message_id"], note)
@@ -1339,14 +1370,15 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
     def cmd_report(self, conn, user, chat_id, args, **_):
         today = self.today_for(user)
-        month = report.previous_month(today)
+        sd = periods.start_day(user)
+        month = periods.previous(today, sd)
         m = re.fullmatch(r"(\d{4})-(\d{1,2})", args.strip())
-        if m:
-            month = date(int(m[1]), int(m[2]), 1)
+        if m and 1 <= int(m[2]) <= 12:
+            month = periods.starting_in(int(m[1]), int(m[2]), sd)
         elif args.strip().lower() in ("this", "now", "current"):
-            month = today.replace(day=1)
+            month = periods.bounds(today, sd)[0]
         if not self.send_chart(conn, user, chat_id, "month", month):
-            self.tg.send_message(chat_id, report.build(conn, user, month, today=today), self.chart_button("month", month))
+            self.tg.send_message(chat_id, report.build(conn, user, month, today=today), self.chart_button("month", month, user))
 
     def cmd_check(self, conn, user, chat_id, args, **_):
         uid = user["telegram_id"]
@@ -1416,8 +1448,9 @@ class Bot(PhotoFlow, SubscriptionFlow):
                         cost_usd(call, self.s.llm_input_price, self.s.llm_output_price))
         return text
 
-    def chart_button(self, kind: str, day: date) -> dict:
-        return webapp.chart_button(self.s.public_url, kind, report_data.bounds(kind, day)[0])
+    def chart_button(self, kind: str, day: date, user: Optional[dict] = None) -> dict:
+        sd = periods.start_day(user) if user else 1
+        return webapp.chart_button(self.s.public_url, kind, report_data.bounds(kind, day, sd)[0])
 
     def send_chart(self, conn, user: dict, chat_id: int, kind: str, day: date, caption: Optional[str] = None,
                    silent: bool = False) -> Optional[dict]:
@@ -1433,7 +1466,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
             picture = report_picture.render(data)
             suggestion = self.ai_suggestion(conn, user, data)
-            markup = self.chart_button(kind, day)
+            markup = self.chart_button(kind, day, user)
             offer = data.get("bowl_offer")
             if offer:
                 markup["inline_keyboard"].append(
@@ -1456,13 +1489,14 @@ class Bot(PhotoFlow, SubscriptionFlow):
         if not user.get("everyday_budget_minor") or not db.mochi_state(conn, uid):
             return "Set an everyday budget first: /budget everyday 600"
         # A button from an earlier day was worked out on old numbers. (Older buttons said "from tomorrow".)
-        if since < today or since > today + timedelta(days=1) or (since.year, since.month) != (today.year, today.month) \
+        sd = periods.start_day(user)
+        if since < today or since > today + timedelta(days=1) or periods.bounds(since, sd) != periods.bounds(today, sd) \
                 or minor <= 0:
             return "That pace is out of date. Send /month for a fresh one."
         since = today
         db.set_bowl_override(conn, uid, minor, since)
-        last = (since.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-        self.tg.edit_message_reply_markup(chat_id, message_id, self.chart_button("month", today))
+        last = periods.bounds(since, sd)[1] - timedelta(days=1)
+        self.tg.edit_message_reply_markup(chat_id, message_id, self.chart_button("month", today, user))
         home = user["home_currency"]
         left = minor - db.spent_for_mochi(conn, uid, today)
         today_text = (f"{fmt(left, home)} left today" if left >= 0 else f"over by {fmt(-left, home)} today")
@@ -1476,27 +1510,39 @@ class Bot(PhotoFlow, SubscriptionFlow):
         self.send_recap(conn, user, chat_id, self.today_for(user))
 
     def maybe_monthly_report(self, conn, user: dict, now: datetime) -> bool:
-        """On the 1st from 09:00 (local), send last month's report and start the balance check."""
+        """From 09:00 (local) on the first day of the user's month, send last month's report.
+        The balance check always starts on the 1st, to match bank statements. Returns True if a report went out."""
         local = now.astimezone(ZoneInfo(user["timezone"]))
-        if local.day != 1 or local.hour < 9:
+        if local.hour < 9:
+            return False
+        sent_report = self.send_monthly_report(conn, user, local)
+        if local.day == 1:
+            self.maybe_start_check(conn, user, local.date())
+        return sent_report
+
+    def maybe_start_check(self, conn, user: dict, today: date) -> None:
+        uid, check_month = user["telegram_id"], today.replace(day=1)
+        if db.start_reconciliation(conn, uid, check_month):
+            self.tg.send_message(uid, "🏦 <b>Balance check</b>\nOpen your bank apps: I'll ask about each wallet.")
+            self.send_next_check(conn, user, uid, check_month)
+
+    def send_monthly_report(self, conn, user: dict, local: datetime) -> bool:
+        sd = periods.start_day(user)
+        if local.day != sd:
             return False
         uid = user["telegram_id"]
-        month = report.previous_month(local.date())
+        month = periods.previous(local.date(), sd)
         if not db.claim_report(conn, uid, month):
             return False
         said = self.say(user, "report")
-        caption = f"📊 <b>{month.strftime('%B %Y')}</b> · monthly report" + (
+        caption = f"📊 <b>{periods.label(*periods.bounds(month, sd))}</b> · monthly report" + (
             f"\n<i>{escape(said, quote=False)}</i>" if said else "")
         sent = self.send_chart(conn, user, uid, "month", month, caption=caption)
         if not sent:
             sent = self.tg.send_message(uid, report.build(conn, user, month, said, today=local.date()),
-                                        self.chart_button("month", month))
+                                        self.chart_button("month", month, user))
         if sent:
             db.set_report_message(conn, uid, month, sent["message_id"])
-        check_month = local.date().replace(day=1)
-        if db.start_reconciliation(conn, uid, check_month):
-            self.tg.send_message(uid, "🏦 <b>Balance check</b>\nOpen your bank apps: I'll ask about each wallet.")
-            self.send_next_check(conn, user, uid, check_month)
         return True
 
     def send_next_check(self, conn, user: dict, chat_id: int, month: date) -> None:
@@ -1551,6 +1597,8 @@ class Bot(PhotoFlow, SubscriptionFlow):
     def on_awaited(self, conn, user: dict, chat_id: int, text: str) -> bool:
         """Handle a typed answer the bot asked for. Returns False to treat it as a normal message."""
         uid, kind = user["telegram_id"], user["awaiting"]
+        if kind.startswith("setup:"):
+            return self.on_setup_text(conn, user, chat_id, text)
         if not kind.startswith("recon:"):
             db.set_awaiting(conn, uid, None)
             return False
@@ -1656,6 +1704,15 @@ class Bot(PhotoFlow, SubscriptionFlow):
 
             elif action == "bowl":
                 note = self.on_bowl_button(conn, uid, rest, chat_id, message_id)
+
+            elif action == "su":
+                note = self.on_setup_button(conn, uid, rest, chat_id, message_id)
+
+            elif action == "wd":
+                note = self.on_wallet_default_button(conn, uid, rest, chat_id, message_id)
+
+            elif action == "ms":
+                note = self.on_month_start_button(conn, uid, rest, chat_id, message_id)
             else:
                 note = "Unknown button."
         finally:
@@ -1739,8 +1796,7 @@ class Bot(PhotoFlow, SubscriptionFlow):
     def refresh_card(self, conn, uid: int, batch_id, chat_id: int, message_id: int) -> None:
         user = db.get_user(conn, uid)
         today = self.today_for(user)
-        text, kb = render_card(db.get_batch(conn, batch_id), today, self.footer(conn, user, today),
-                               user["home_currency"])
+        text, kb = self.card(conn, user, db.get_batch(conn, batch_id), today)
         self.tg.edit_message_text(chat_id, message_id, text, kb)
 
     # ------------------------------------------------------------------ scheduler

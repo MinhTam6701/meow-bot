@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 
 from meow.bot import Bot
 from meow.config import Settings
+from meow.defaults import DEFAULT_WALLETS
 from tests.support import DB_URL, ME, NOW, SCHEMA, FakeLLM, FakeTelegram
 
 
@@ -25,7 +26,8 @@ def env():
     conn.execute(SCHEMA)
     conn.autocommit = False
     tg, llm = FakeTelegram(), FakeLLM()
-    settings = Settings(allowed_user_ids={ME}, anthropic_model="claude-haiku-4-5")
+    # The tests start from the original two wallets; tests/test_setup.py starts from none.
+    settings = Settings(allowed_user_ids={ME}, anthropic_model="claude-haiku-4-5", starter_wallets=list(DEFAULT_WALLETS))
     clock = SimpleNamespace(now=NOW)
     fx_calls = []
 

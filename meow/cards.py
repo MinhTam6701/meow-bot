@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from html import escape
+from typing import Optional
 
 from .models import CategoryInfo, WalletInfo
 from .money import fmt
@@ -33,10 +34,21 @@ def _amount(r: dict, home: str) -> str:
     return shown
 
 
-def render_card(rows: list[dict], today: date, footer: str, home: str = "SGD") -> tuple[str, dict]:
-    """rows come from db.get_batch; footer is the totals line."""
+def balance_line(balances: Optional[list[tuple[str, int, str]]]) -> Optional[str]:
+    """What's left in the wallets an entry touched: (name, balance in minor units, currency)."""
+    if not balances:
+        return None
+    if len(balances) == 1:
+        name, minor, cur = balances[0]
+        return f"👛 {escape(name)} balance: <b>{fmt(minor, cur)}</b>"
+    return "👛 Balances: " + " · ".join(f"{escape(n)} <b>{fmt(m, c)}</b>" for n, m, c in balances)
+
+
+def render_card(rows: list[dict], today: date, footer: str, home: str = "SGD",
+                balances: Optional[list[tuple[str, int, str]]] = None) -> tuple[str, dict]:
+    """rows come from db.get_batch; footer is the totals line; balances are the touched wallets after it."""
     if rows and all(r["type"] == "transfer" for r in rows):
-        return render_transfer_card(rows, today)
+        return render_transfer_card(rows, today, balances)
     live = [r for r in rows if not r["reversed"]]
     if not live:
         header = "↩️ <b>Undone</b>"
@@ -53,6 +65,9 @@ def render_card(rows: list[dict], today: date, footer: str, home: str = "SGD") -
         if r["reversed"]:
             main, detail = f"<s>{main}</s>", f"<s>{detail}</s>"
         lines += [main, detail]
+    wallet_line = balance_line(balances)
+    if wallet_line:
+        lines += ["", wallet_line]
     lines += ["", footer]
     note = rows[0].get("card_note") if rows else None
     if note and live:
@@ -76,7 +91,8 @@ def render_card(rows: list[dict], today: date, footer: str, home: str = "SGD") -
     return text, {"inline_keyboard": keyboard}
 
 
-def render_transfer_card(rows: list[dict], today: date) -> tuple[str, dict]:
+def render_transfer_card(rows: list[dict], today: date,
+                         balances: Optional[list[tuple[str, int, str]]] = None) -> tuple[str, dict]:
     out = next(r for r in rows if r["amount_minor"] < 0)
     inc = next(r for r in rows if r["amount_minor"] > 0)
     undone = all(r["reversed"] for r in rows)
@@ -85,6 +101,9 @@ def render_transfer_card(rows: list[dict], today: date) -> tuple[str, dict]:
                                                else f" ({fmt(inc['amount_minor'], inc['currency'])})"))
     lines = ["↩️ <b>Transfer undone</b>" if undone else "🔁 <b>Transfer</b>", "", f"<s>{line}</s>" if undone else line,
              f"    {day_label(out['occurred_on'], today)}"]
+    wallet_line = balance_line(balances)
+    if wallet_line:
+        lines += ["", wallet_line]
     note = rows[0].get("card_note")
     if note and not undone:
         lines += ["", note]
